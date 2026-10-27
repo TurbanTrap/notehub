@@ -1,0 +1,608 @@
+:root {
+  --accent: #7719aa;
+  --accent-soft: #f3e8fa;
+
+  --bg: #ffffff;
+  --bg-sidebar: #f6f5f8;
+  --bg-hover: #ebe8ef;
+  --bg-active: var(--accent-soft);
+
+  --text: #1b1a1f;
+  --text-dim: #6b6875;
+  --border: #e2dfe8;
+  --danger: #c0392b;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-read: "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #c08bdb;
+    --accent-soft: #3a2347;
+
+    --bg: #1c1b20;
+    --bg-sidebar: #171619;
+    --bg-hover: #2a282f;
+    --bg-active: var(--accent-soft);
+
+    --text: #eceaf0;
+    --text-dim: #9d98a8;
+    --border: #322f39;
+    --danger: #ef7a6d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* ---------- first run ---------- */
+
+.boot,
+.welcome,
+.empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  text-align: center;
+}
+
+.welcome h1 {
+  margin: 0;
+  font-size: 40px;
+  letter-spacing: -0.5px;
+  color: var(--accent);
+}
+
+.welcome p {
+  margin: 0;
+  max-width: 430px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.welcome-hint {
+  font-size: 13px;
+}
+
+.welcome-error {
+  color: var(--danger);
+}
+
+.empty-hint,
+.boot {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  padding: 9px 18px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+}
+
+.btn-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.1);
+  background: var(--accent);
+}
+
+.btn-danger {
+  border-color: transparent;
+  background: var(--danger);
+  color: #fff;
+  font-weight: 600;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* ---------- layout ---------- */
+
+.app {
+  display: grid;
+  grid-template-columns: 262px 1fr;
+  height: 100%;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-sidebar);
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 12px 10px;
+  /* Clears the traffic-light buttons on macOS. */
+  padding-top: 28px;
+}
+
+.brand {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------- tree ---------- */
+
+.tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 6px 16px;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding-right: 4px;
+  border-radius: 6px;
+}
+
+.row:hover {
+  background: var(--bg-hover);
+}
+
+.row-active {
+  background: var(--bg-active);
+}
+
+.row-active .row-label {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.twisty,
+.twisty-spacer {
+  flex: none;
+  width: 16px;
+}
+
+.twisty {
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.row-icon {
+  flex: none;
+  width: 18px;
+  font-size: 11px;
+}
+
+.row-label {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.row-notebook .row-label {
+  font-weight: 600;
+}
+
+.row-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.row-actions {
+  display: none;
+  gap: 1px;
+}
+
+.row:hover .row-actions {
+  display: flex;
+}
+
+.row-empty {
+  height: 24px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+}
+
+/* ---------- row menu ---------- */
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.menu {
+  position: absolute;
+  top: 26px;
+  right: 4px;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+.menu button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu button:hover {
+  background: var(--bg-hover);
+}
+
+.menu .danger {
+  color: var(--danger);
+}
+
+/* ---------- editor ---------- */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 26px 48px 10px;
+}
+
+.title-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.title-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+.status {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.status-error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 6px 48px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar-group {
+  display: flex;
+  gap: 2px;
+}
+
+.tb-btn {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tb-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tb-active {
+  background: var(--bg-active);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.editor-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 48px 45vh;
+  cursor: text;
+}
+
+/* ---------- page content ---------- */
+
+.prose {
+  max-width: 760px;
+  font-family: var(--font-read);
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.prose:focus {
+  outline: none;
+}
+
+.prose > *:first-child {
+  margin-top: 0;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  font-family: var(--font-ui);
+  line-height: 1.3;
+  margin: 1.5em 0 0.4em;
+}
+
+.prose h1 {
+  font-size: 1.6em;
+}
+
+.prose h2 {
+  font-size: 1.32em;
+}
+
+.prose h3 {
+  font-size: 1.12em;
+}
+
+.prose h4 {
+  font-size: 1em;
+  color: var(--text-dim);
+}
+
+.prose p,
+.prose ul,
+.prose ol {
+  margin: 0.7em 0;
+}
+
+.prose li {
+  margin: 0.25em 0;
+}
+
+.prose a {
+  color: var(--accent);
+}
+
+.prose blockquote {
+  margin: 0.9em 0;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid var(--accent);
+  color: var(--text-dim);
+}
+
+.prose hr {
+  margin: 1.6em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.prose code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+/* Disassembly and hex dumps land here, so it must not wrap or reflow. */
+.prose pre {
+  margin: 1em 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 4;
+}
+
+.prose pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  white-space: pre;
+}
+
+.prose .is-editor-empty:first-child::before {
+  content: "Start writing…";
+  float: left;
+  height: 0;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+/* ---------- banner and modal ---------- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 48px 0;
+  padding: 9px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  font-size: 13px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.42);
+}
+
+.modal {
+  width: min(410px, calc(100vw - 48px));
+  padding: 22px;
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.3);
+}
+
+.modal h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.modal p {
+  margin: 0 0 18px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
