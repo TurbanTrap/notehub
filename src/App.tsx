@@ -108,6 +108,10 @@ export default function App() {
       try {
         const last = await api.lastVault();
         if (last) await loadVault(last);
+      } catch (e) {
+        // Without this the failure is an unhandled rejection and the welcome screen
+        // appears with no hint as to why the last vault did not reopen.
+        setError(String(e));
       } finally {
         setBooting(false);
       }
