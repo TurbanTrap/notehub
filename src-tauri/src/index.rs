@@ -44,13 +44,7 @@ pub struct TagCount {
 /// Named after the vault's path so that two vaults never share an index, and so that
 /// moving a vault simply starts a new one rather than showing stale results.
 pub fn db_path(cache_dir: &Path, vault: &Path) -> PathBuf {
-    let key = vault.to_string_lossy();
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in key.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x1000_0000_01b3);
-    }
-    cache_dir.join(format!("index-{hash:016x}.sqlite"))
+    cache_dir.join(format!("index-{}.sqlite", crate::paths::vault_key(vault)))
 }
 
 fn open(db: &Path) -> Result<Connection, String> {

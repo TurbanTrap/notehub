@@ -18,9 +18,15 @@ export type SaveStatus = "saved" | "unsaved" | "saving" | "error";
 interface Props {
   pagePath: string;
   page: Page;
+  /**
+   * Changes when the open page's text has to be pushed in again without the page
+   * itself changing — reloaded after a sync, or restored from history.
+   */
+  reloadToken: number;
   status: SaveStatus;
   onBodyChange: (markdown: string) => void;
   onTitleCommit: (title: string) => void;
+  onOpenHistory: () => void;
   /** Follow a [[wiki link]]; returns false when no page of that title exists. */
   onOpenWikiLink: (title: string) => boolean;
   /** Whether a [[wiki link]] points at a page that exists, for styling. */
@@ -50,9 +56,11 @@ const VaultImage = Image.extend({
 export default function Editor({
   pagePath,
   page,
+  reloadToken,
   status,
   onBodyChange,
   onTitleCommit,
+  onOpenHistory,
   onOpenWikiLink,
   resolveWikiLink,
   onError,
@@ -211,8 +219,11 @@ export default function Editor({
   const editorRef = useRef<TipTapEditor | null>(null);
   editorRef.current = editor;
 
-  // Swap in a different page. Keyed on the path alone: keying on the body as well
-  // would reset the cursor to the top on every autosave.
+  // Swap in a different page. Keyed on the path and the reload token, never on the
+  // body: keying on the body would reset the cursor to the top on every autosave,
+  // while the token lets the page above say "this really is new text" for the two
+  // cases where the path stays the same — a version arriving from another machine,
+  // and a restore from history.
   useEffect(() => {
     if (!editor) return;
     loading.current = true;
@@ -224,7 +235,7 @@ export default function Editor({
     setTitle(page.title);
     setActiveHeading(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, pagePath]);
+  }, [editor, pagePath, reloadToken]);
 
   // Mark links whose page does not exist. Done over the rendered DOM rather than as a
   // node attribute, because whether a link resolves depends on the rest of the vault,
@@ -273,6 +284,13 @@ export default function Editor({
           }}
         />
         <span className={`status status-${status}`}>{statusLabel(status)}</span>
+        <button
+          className="link-btn"
+          title="Earlier versions of this page, kept on this machine"
+          onClick={onOpenHistory}
+        >
+          History
+        </button>
       </header>
 
       <TagBar tags={page.tags} onChange={onTagsChange} onSearchTag={onSearchTag} />

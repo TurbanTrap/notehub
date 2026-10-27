@@ -6,12 +6,27 @@ import Sidebar from "./components/Sidebar";
 import SearchResults from "./components/SearchResults";
 import QuickSwitcher from "./components/QuickSwitcher";
 import ConfirmDialog from "./components/ConfirmDialog";
+import HistoryDialog from "./components/HistoryDialog";
 import "./App.css";
 
 const AUTOSAVE_DELAY_MS = 700;
 const SEARCH_DELAY_MS = 150;
 /** One letter matches most of the vault; waiting for two keeps the list meaningful. */
 const MIN_QUERY = 2;
+/**
+ * How long to let folder changes settle before acting on them.
+ *
+ * A sync client pulling one note in touches the file several times, and pulling a
+ * folder in touches dozens. Waiting means one tree rebuild instead of thirty.
+ */
+const WATCH_SETTLE_MS = 300;
+
+/** Something worth telling the person that is not an error. */
+interface Notice {
+  text: string;
+  /** A page to offer to open — their own text, after a clash was set aside. */
+  openPath?: string;
+}
 
 export default function App() {
   const [booting, setBooting] = useState(true);
@@ -21,10 +36,19 @@ export default function App() {
 
   const [activePath, setActivePath] = useState<string | null>(null);
   const [activePage, setActivePage] = useState<Page | null>(null);
+  /**
+   * Bumped whenever the open page's text has to be pushed into the editor again
+   * without the page itself changing — a reload after a sync, or a restored version.
+   * The editor only swaps its content when the path changes, which is what stops
+   * every autosave from throwing the cursor back to the top.
+   */
+  const [reloadToken, setReloadToken] = useState(0);
 
   const [status, setStatus] = useState<SaveStatus>("saved");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [pendingDelete, setPendingDelete] = useState<TreeNode | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -35,32 +59,84 @@ export default function App() {
   // The edit waiting to be written, and the timer that will write it. Held in refs so
   // that flushing from an event handler always sees the latest value. The vault goes
   // in with it, so flushing never has to reach for state that may have moved on.
-  const pending = useRef<{ vault: string; path: string; body: string } | null>(null);
+  //
+  // `hash` is the fingerprint of the file as it was last known to be on disk. The save
+  // compares it with what is actually there, and that is what catches the other
+  // machine's copy arriving while this page is open.
+  const pending = useRef<{ vault: string; path: string; body: string; hash: string | null } | null>(
+    null,
+  );
   const timer = useRef<number | null>(null);
 
-  const flush = useCallback(async () => {
+  // Read in callbacks that are registered once and must not close over stale state.
+  const activePathRef = useRef<string | null>(null);
+  activePathRef.current = activePath;
+  // The open page's fingerprint. A ref rather than state because nothing renders it,
+  // and because a save has to read the value that is current at the moment it runs,
+  // not the one from the render that scheduled it.
+  const hashRef = useRef<string | null>(null);
+
+  /**
+   * Point a save that is already queued at the file as it now is.
+   *
+   * Typing during a save leaves a job holding the fingerprint from before it. Sent as
+   * it stands, that job would look like a clash with a write this app had just made
+   * itself, and would produce a conflict page out of nothing.
+   */
+  const retargetQueuedSave = useCallback((path: string, hash: string) => {
+    if (pending.current?.path === path) pending.current.hash = hash;
+  }, []);
+
+  const doFlush = useCallback(async (): Promise<api.SaveResult | null> => {
     if (timer.current !== null) {
       clearTimeout(timer.current);
       timer.current = null;
     }
     const job = pending.current;
-    if (!job) return;
+    if (!job) return null;
     pending.current = null;
 
     setStatus("saving");
     try {
-      await api.savePage(job.vault, job.path, job.body);
+      const result = await api.savePage(job.vault, job.path, job.body, job.hash);
       setStatus("saved");
+
+      // Each save moves the file on, so the fingerprint to compare against next time
+      // is the one that just came back. Without this, the save after a save would look
+      // like a clash with itself.
+      if (job.path === activePathRef.current) hashRef.current = result.hash;
+      retargetQueuedSave(job.path, result.hash);
+
+      if (result.conflictPath) {
+        setNotice({
+          text:
+            "This page had already changed in your notes folder — most likely your other " +
+            "machine syncing. Nothing was overwritten: your text was saved as a page of its own.",
+          openPath: result.conflictPath,
+        });
+      }
+      return result;
     } catch (e) {
       setStatus("error");
       setError(String(e));
+      return null;
     }
-  }, []);
+  }, [retargetQueuedSave]);
+
+  // Saves run one at a time. Two overlapping ones would each send the fingerprint they
+  // started with, and the second would look like a clash with the first — producing a
+  // conflict page out of nothing but a fast typist.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const flush = useCallback((): Promise<api.SaveResult | null> => {
+    const next = queue.current.then(doFlush, doFlush);
+    queue.current = next;
+    return next;
+  }, [doFlush]);
 
   const queueSave = useCallback(
     (path: string, body: string) => {
       if (!vaultPath) return;
-      pending.current = { vault: vaultPath, path, body };
+      pending.current = { vault: vaultPath, path, body, hash: hashRef.current };
       setStatus("unsaved");
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void flush(), AUTOSAVE_DELAY_MS);
@@ -98,7 +174,7 @@ export default function App() {
 
   const loadVault = useCallback(async (path: string) => {
     try {
-      const nodes = await api.openVault(path);
+      const { tree: nodes, warnings } = await api.openVault(path);
       setVaultPath(path);
       setTree(nodes);
       // Open each notebook and its first level so the window is never a blank slate.
@@ -111,11 +187,15 @@ export default function App() {
 
       const first = findFirstPage(nodes);
       if (first) {
-        const page = await api.readPage(first.path);
+        const read = await api.readPage(first.path);
         setActivePath(first.path);
-        setActivePage(page);
+        setActivePage(read.page);
+        hashRef.current = read.hash;
       }
       setError(null);
+      // Things that went wrong without stopping the notes from opening: images that
+      // cannot be shown, or a folder that cannot be watched for incoming changes.
+      setNotice(warnings.length > 0 ? { text: warnings.join(" ") } : null);
 
       // Catches notes that arrived from the other machine through a sync folder, which
       // change on disk without this app involved. Not awaited: a cold index on a large
@@ -151,6 +231,107 @@ export default function App() {
     }
   }, [vaultPath]);
 
+  const refreshTreeRef = useRef(refreshTree);
+  refreshTreeRef.current = refreshTree;
+
+  /** Show what is on disk now, discarding nothing — callers flush first if needed. */
+  const reloadActive = useCallback(async (message?: string) => {
+    const path = activePathRef.current;
+    if (!path) return;
+    try {
+      const read = await api.readPage(path);
+      setActivePage(read.page);
+      hashRef.current = read.hash;
+      setReloadToken((n) => n + 1);
+      setStatus("saved");
+      if (message) setNotice({ text: message });
+    } catch {
+      // The file is gone: deleted on the other machine, or moved in Finder.
+      setNotice({ text: "This page is no longer in your notes folder." });
+      setActivePath(null);
+      setActivePage(null);
+      hashRef.current = null;
+    }
+  }, []);
+
+  /**
+   * The open page changed on disk without this app doing it.
+   *
+   * With nothing unsaved, the arriving text simply replaces what is shown. With an
+   * unsaved edit, the save goes first: it is the thing that compares fingerprints, and
+   * it puts this machine's text in a page of its own rather than over the one that
+   * arrived. Only then is the arriving version shown.
+   */
+  const externalChange = useCallback(async () => {
+    const path = activePathRef.current;
+    if (!path) return;
+
+    if (pending.current?.path === path) {
+      const result = await flush();
+      if (result?.conflictPath) await refreshTreeRef.current();
+      await reloadActive();
+      return;
+    }
+
+    await reloadActive("This page was updated from your notes folder.");
+  }, [flush, reloadActive]);
+
+  const externalChangeRef = useRef(externalChange);
+  externalChangeRef.current = externalChange;
+
+  /**
+   * Act on changes the folder watcher reports.
+   *
+   * Changes are collected and acted on once they stop arriving, because one incoming
+   * note touches its file several times and an incoming folder touches dozens.
+   */
+  useEffect(() => {
+    const vault = vaultPath;
+    if (!vault) return;
+
+    let unlisten: (() => void) | undefined;
+    let settleTimer: number | null = null;
+    let cancelled = false;
+    const touched = new Set<string>();
+    let structural = false;
+
+    const settle = () => {
+      settleTimer = null;
+      const paths = [...touched];
+      const wasStructural = structural;
+      touched.clear();
+      structural = false;
+
+      // A rebuilt tree reindexes as part of its work; otherwise the index still needs
+      // to hear about the changed page so search does not go stale.
+      if (wasStructural) void refreshTreeRef.current();
+      else void api.reindex(vault).catch(() => undefined);
+
+      const active = activePathRef.current;
+      if (active && paths.includes(active)) void externalChangeRef.current();
+    };
+
+    void api
+      .onVaultChange((change) => {
+        for (const path of change.paths) touched.add(path);
+        if (change.structural) structural = true;
+        if (settleTimer !== null) clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(settle, WATCH_SETTLE_MS);
+      })
+      .then((stop) => {
+        // The vault may already have been switched by the time the listener is ready.
+        if (cancelled) stop();
+        else unlisten = stop;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      unlisten?.();
+    };
+  }, [vaultPath]);
+
   const chooseVault = async () => {
     const picked = await api.pickVault();
     if (picked) await loadVault(picked);
@@ -163,9 +344,10 @@ export default function App() {
       // edit would be saved against whichever page is open when the timer fires.
       await flush();
       try {
-        const page = await api.readPage(path);
+        const read = await api.readPage(path);
         setActivePath(path);
-        setActivePage(page);
+        setActivePage(read.page);
+        hashRef.current = read.hash;
         setStatus("saved");
 
         // Open the folders leading to it, so arriving by a link does not leave the
@@ -336,8 +518,10 @@ export default function App() {
       await refreshTree();
 
       if (activePath === node.path) {
+        const read = await api.readPage(updated.path);
         setActivePath(updated.path);
-        setActivePage(await api.readPage(updated.path));
+        setActivePage(read.page);
+        hashRef.current = read.hash;
       }
       if (expanded.has(node.path)) {
         setExpanded((prev) => {
@@ -355,7 +539,32 @@ export default function App() {
   const changeTags = async (tags: string[]) => {
     if (!vaultPath || !activePath) return;
     try {
-      setActivePage(await api.setTags(vaultPath, activePath, tags));
+      // Tags live in the same file as the text, so an unsaved edit has to land first
+      // or writing them would put the older body back.
+      await flush();
+      const read = await api.setTags(vaultPath, activePath, tags, hashRef.current);
+      setActivePage(read.page);
+      hashRef.current = read.hash;
+    } catch (e) {
+      setError(String(e));
+      // The one error worth recovering from is "the file changed underneath you", and
+      // the answer to it is to show what is actually there.
+      await reloadActive();
+    }
+  };
+
+  const restoreVersion = async (stamp: string) => {
+    if (!vaultPath || !activePath) return;
+    try {
+      await flush();
+      const read = await api.restoreVersion(vaultPath, activePath, stamp);
+      setActivePage(read.page);
+      hashRef.current = read.hash;
+      setReloadToken((n) => n + 1);
+      setHistoryOpen(false);
+      setNotice({
+        text: "Earlier text restored. The version you were on was kept, so this can be undone from History.",
+      });
     } catch (e) {
       setError(String(e));
     }
@@ -382,6 +591,7 @@ export default function App() {
       if (activePath && isAtOrUnder(activePath, node.path)) {
         setActivePath(null);
         setActivePage(null);
+        hashRef.current = null;
       }
     } catch (e) {
       setError(String(e));
@@ -491,12 +701,35 @@ export default function App() {
           </div>
         )}
 
+        {notice && (
+          <div className="banner banner-notice">
+            <span>{notice.text}</span>
+            {notice.openPath && (
+              <button
+                className="btn btn-small"
+                onClick={() => {
+                  const path = notice.openPath;
+                  setNotice(null);
+                  if (path) void selectPage(path);
+                }}
+              >
+                Open my version
+              </button>
+            )}
+            <button className="icon-btn" onClick={() => setNotice(null)} aria-label="Dismiss">
+              ✕
+            </button>
+          </div>
+        )}
+
         {activePage && activePath ? (
           <Editor
             pagePath={activePath}
             page={activePage}
+            reloadToken={reloadToken}
             status={status}
             onBodyChange={(body) => queueSave(activePath, body)}
+            onOpenHistory={() => setHistoryOpen(true)}
             onTitleCommit={(title) =>
               void rename({ kind: "page", title: activePage.title, path: activePath, children: [] }, title)
             }
@@ -522,6 +755,16 @@ export default function App() {
           pages={flatPages}
           onOpen={(p) => void selectPage(p)}
           onClose={() => setSwitcherOpen(false)}
+        />
+      )}
+
+      {historyOpen && activePath && (
+        <HistoryDialog
+          vaultPath={vaultPath}
+          pagePath={activePath}
+          onRestore={(stamp) => void restoreVersion(stamp)}
+          onClose={() => setHistoryOpen(false)}
+          onError={setError}
         />
       )}
 

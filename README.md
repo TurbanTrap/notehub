@@ -39,7 +39,28 @@ someone else.
 
 ```bash
 cd src-tauri && cargo test
+npx vitest run
 ```
+
+## Syncing
+
+A note can change while it is open — that is what a sync folder does. NoteHub watches
+the vault and reacts rather than carrying on with stale text:
+
+- **Nothing unsaved:** the arriving version simply replaces what is on screen.
+- **Something unsaved:** the file that arrived is left untouched, and your text is
+  written to a new page beside it, named `<page>.conflict-<date>.md`. Both versions
+  are then in the sidebar. Nothing is merged automatically, because merging means
+  guessing.
+
+Each save is checked against a fingerprint of the file as it was loaded, so a clash is
+caught even if the watcher misses an event.
+
+**History** in a page's header lists earlier copies of its text, kept on this machine
+in the app's data folder — outside the vault, so the sync folder never carries them,
+and outside the cache folder, which the system may clear. One is kept every couple of
+minutes while you work, and whenever a version arrives from elsewhere. Restoring puts
+the text back and keeps what you were on, so it can be undone.
 
 ## Vault layout
 

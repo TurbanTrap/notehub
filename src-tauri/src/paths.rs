@@ -70,6 +70,37 @@ pub fn short_id() -> String {
     uuid::Uuid::new_v4().to_string()[..8].to_string()
 }
 
+/// A short, stable name for a vault, derived from its path.
+///
+/// Used for the per-vault folders this app keeps *outside* the vault — its search
+/// index and its version history — so that two vaults never share either, and moving
+/// a vault simply starts fresh rather than showing another vault's contents.
+pub fn vault_key(vault: &Path) -> String {
+    // FNV-1a. This one only has to separate two folder paths, never to tell two
+    // versions of a note apart, so it does not need to be a strong hash.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in vault.to_string_lossy().as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x1000_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Where a page's text goes when the file on disk turned out to have changed
+/// underneath us.
+///
+/// Deliberately a plain `.md` file beside the page: it then shows up in the sidebar
+/// by itself, instead of being hidden somewhere the person would have to be told
+/// about. `stamp` is a human-readable date so the name says when it happened.
+pub fn conflict_path(page: &Path, stamp: &str) -> PathBuf {
+    let dir = page.parent().unwrap_or_else(|| Path::new("."));
+    let stem = page
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "page".to_string());
+    unique_path(dir, &format!("{stem}.conflict-{stamp}"), "md")
+}
+
 /// Whether `candidate` already exists in `dir`, comparing case-insensitively.
 ///
 /// macOS and Windows both treat `Notes.md` and `notes.md` as the same file while Linux
@@ -145,5 +176,42 @@ mod tests {
         let slug = slugify(&"word ".repeat(40));
         assert!(slug.len() <= MAX_SLUG_LEN);
         assert!(!slug.ends_with('-'));
+    }
+
+    #[test]
+    fn a_conflict_copy_sits_beside_the_page_as_a_page() {
+        let page = Path::new("/vault/notebooks/RE/upx-unpacking.md");
+        let dest = conflict_path(page, "2026-10-28-143055");
+
+        assert_eq!(dest.parent(), page.parent());
+        assert_eq!(
+            dest.file_name().unwrap(),
+            "upx-unpacking.conflict-2026-10-28-143055.md"
+        );
+    }
+
+    #[test]
+    fn two_conflicts_in_the_same_second_do_not_overwrite_each_other() {
+        let dir = std::env::temp_dir().join(format!("notehub-conflict-{}", short_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let page = dir.join("note.md");
+        std::fs::write(&page, "x").unwrap();
+
+        let first = conflict_path(&page, "2026-10-28-143055");
+        std::fs::write(&first, "mine").unwrap();
+        let second = conflict_path(&page, "2026-10-28-143055");
+
+        assert_ne!(first, second);
+        assert_eq!(second.file_name().unwrap(), "note.conflict-2026-10-28-143055-2.md");
+    }
+
+    #[test]
+    fn two_vaults_get_different_keys_and_one_vault_keeps_its_own() {
+        let a = vault_key(Path::new("/Users/jds/Notes"));
+        let b = vault_key(Path::new("/Users/jds/Other"));
+
+        assert_ne!(a, b);
+        assert_eq!(a, vault_key(Path::new("/Users/jds/Notes")));
+        assert_eq!(a.len(), 16);
     }
 }

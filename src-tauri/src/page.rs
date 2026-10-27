@@ -118,14 +118,42 @@ impl Page {
     }
 }
 
+/// A page as it was on disk at one moment: the parsed page, the exact text it came
+/// from, and the fingerprint of the bytes that were read.
+pub struct Loaded {
+    pub page: Page,
+    pub raw: String,
+    pub hash: String,
+}
+
 /// Read a page from disk, falling back to the filename for the title.
 pub fn read(path: &Path) -> Result<Page, String> {
-    let raw = std::fs::read_to_string(path).map_err(|e| format!("could not read page: {e}"))?;
+    load(path).map(|loaded| loaded.page)
+}
+
+/// Read a page together with its fingerprint and its original text.
+///
+/// One read, not three: a save needs the parsed page to keep its id and tags, the raw
+/// text to keep a copy of in history, and the fingerprint to check that the file has
+/// not moved on since the editor loaded it. Reading separately for each would leave a
+/// window in which a sync client could write between them, and the save would then
+/// mix two versions of the file together.
+pub fn load(path: &Path) -> Result<Loaded, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("could not read page: {e}"))?;
+    let hash = crate::fingerprint::of_bytes(&bytes);
+    // Lossy rather than an error: a note mangled by some other tool should still open
+    // so its text can be rescued, instead of becoming unreachable from the app.
+    let raw = String::from_utf8_lossy(&bytes).to_string();
     let fallback = path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "Untitled".into());
-    Ok(Page::from_file_string(&raw, &fallback))
+
+    Ok(Loaded {
+        page: Page::from_file_string(&raw, &fallback),
+        raw,
+        hash,
+    })
 }
 
 /// Write a page to disk atomically.
@@ -134,13 +162,22 @@ pub fn read(path: &Path) -> Result<Page, String> {
 /// renamed over the target, so a crash or a sync client reading mid-write can never
 /// observe a half-written note.
 pub fn write(path: &Path, page: &Page) -> Result<(), String> {
+    write_text(path, &page.to_file_string())
+}
+
+/// Write already-serialised page text.
+///
+/// Callers that need to know the fingerprint of what landed on disk serialise once and
+/// hash the same string they pass here, rather than reading the file back and hoping
+/// nothing wrote to it in between.
+pub fn write_text(path: &Path, text: &str) -> Result<(), String> {
     let dir = path
         .parent()
         .ok_or_else(|| "page path has no parent directory".to_string())?;
     std::fs::create_dir_all(dir).map_err(|e| format!("could not create folder: {e}"))?;
 
     let tmp = dir.join(format!(".{}.tmp", crate::paths::short_id()));
-    std::fs::write(&tmp, page.to_file_string()).map_err(|e| format!("could not write page: {e}"))?;
+    std::fs::write(&tmp, text).map_err(|e| format!("could not write page: {e}"))?;
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("could not save page: {e}")

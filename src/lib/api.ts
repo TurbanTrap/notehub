@@ -1,5 +1,6 @@
 /** Typed wrappers over the Rust commands. Every path is an absolute path on disk. */
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type NodeKind = "notebook" | "section" | "page";
 
@@ -23,7 +24,13 @@ export const pickVault = () => invoke<string | null>("pick_vault");
 
 export const lastVault = () => invoke<string | null>("last_vault");
 
-export const openVault = (path: string) => invoke<TreeNode[]>("open_vault", { path });
+/** A vault that opened, plus anything that went wrong but did not stop it opening. */
+export interface OpenResult {
+  tree: TreeNode[];
+  warnings: string[];
+}
+
+export const openVault = (path: string) => invoke<OpenResult>("open_vault", { path });
 
 export const readTree = (vaultPath: string) => invoke<TreeNode[]>("read_tree", { vaultPath });
 
@@ -36,10 +43,34 @@ export const createSection = (parentPath: string, title: string) =>
 export const createPage = (parentPath: string, title: string) =>
   invoke<TreeNode>("create_page", { parentPath, title });
 
-export const readPage = (path: string) => invoke<Page>("read_page", { path });
+/**
+ * A page together with the fingerprint of the bytes it was read from.
+ *
+ * Hand the fingerprint back when saving: that is how the save knows whether the file
+ * has changed on disk since, which it will have done if a sync client dropped the
+ * other machine's copy on top of it.
+ */
+export interface PageRead {
+  page: Page;
+  hash: string;
+}
 
-export const savePage = (vaultPath: string, path: string, body: string) =>
-  invoke<Page>("save_page", { vaultPath, path, body });
+export interface SaveResult {
+  page: Page;
+  hash: string;
+  /** Set when the file had already changed; the text went here, and the page on disk
+   *  was left exactly as it was found. */
+  conflictPath: string | null;
+}
+
+export const readPage = (path: string) => invoke<PageRead>("read_page", { path });
+
+export const savePage = (
+  vaultPath: string,
+  path: string,
+  body: string,
+  baseHash: string | null,
+) => invoke<SaveResult>("save_page", { vaultPath, path, body, baseHash });
 
 export const renameItem = (path: string, newTitle: string) =>
   invoke<TreeNode>("rename_item", { path, newTitle });
@@ -86,5 +117,38 @@ export const allTags = (vaultPath: string) => invoke<TagCount[]>("all_tags", { v
 export const pagesWithTag = (vaultPath: string, tag: string) =>
   invoke<LinkRef[]>("pages_with_tag", { vaultPath, tag });
 
-export const setTags = (vaultPath: string, path: string, tags: string[]) =>
-  invoke<Page>("set_tags", { vaultPath, path, tags });
+export const setTags = (
+  vaultPath: string,
+  path: string,
+  tags: string[],
+  baseHash: string | null,
+) => invoke<PageRead>("set_tags", { vaultPath, path, tags, baseHash });
+
+/** One kept copy of a page's earlier text. */
+export interface Version {
+  /** Handle used to read or restore it. */
+  stamp: string;
+  /** When it was taken, as RFC 3339. */
+  saved: string;
+  bytes: number;
+}
+
+export const pageVersions = (vaultPath: string, path: string) =>
+  invoke<Version[]>("page_versions", { vaultPath, path });
+
+export const readVersion = (vaultPath: string, path: string, stamp: string) =>
+  invoke<string>("read_version", { vaultPath, path, stamp });
+
+export const restoreVersion = (vaultPath: string, path: string, stamp: string) =>
+  invoke<PageRead>("restore_version", { vaultPath, path, stamp });
+
+/** Something in the vault changed without this app doing it. */
+export interface VaultChange {
+  /** Page files that changed, as absolute paths. */
+  paths: string[];
+  /** Whether anything appeared, vanished or was renamed, so the sidebar is stale. */
+  structural: boolean;
+}
+
+export const onVaultChange = (handler: (change: VaultChange) => void): Promise<UnlistenFn> =>
+  listen<VaultChange>("vault-changed", (event) => handler(event.payload));

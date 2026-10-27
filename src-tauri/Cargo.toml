@@ -28,6 +28,14 @@ base64 = "0.22"
 # bundled: compiles SQLite in, so the app does not depend on the system copy, and
 # brings FTS5 with it for full-text search.
 rusqlite = { version = "0.37", features = ["bundled"] }
+# Noticing when a sync client rewrites a note while it is open. Debounced, because
+# one incoming file can arrive as a create, several writes and a rename.
+notify = "8"
+notify-debouncer-full = "0.7"
+# Telling "the file I loaded" from "the file on disk now". A weak hash would risk
+# silently overwriting the other machine's edit, which is the one thing this must
+# never do, so it is worth a real one.
+sha2 = "0.11"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
