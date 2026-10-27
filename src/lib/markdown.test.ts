@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { htmlToMarkdown, markdownToHtml } from "./markdown";
+import { describe, expect, it, vi } from "vitest";
+
+// The real one builds a URL only the Tauri webview can load; the shape is all that
+// matters here, and the tests assert the vault-relative path survives regardless.
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `asset://localhost/${encodeURIComponent(path)}`,
+}));
+
+const { htmlToMarkdown, markdownToHtml, parentDir } = await import("./markdown");
 
 /** One open-and-save cycle in the app: file -> editor -> file. */
 const cycle = (markdown: string) => htmlToMarkdown(markdownToHtml(markdown));
@@ -77,5 +84,72 @@ describe("markdown round trip", () => {
 
   it("handles an empty page", () => {
     expect(cycle("")).toBe("");
+  });
+});
+
+describe("wiki links", () => {
+  it("survives a round trip", () => {
+    const out = cycle("See [[Ghidra Basics]] for the setup.");
+
+    expect(out).toContain("[[Ghidra Basics]]");
+    expect(cycle(out)).toBe(out);
+  });
+
+  it("is left alone inside code", () => {
+    // An array index in a code sample must not silently become a page link.
+    const fenced = cycle("```\nmatrix[[0]] = 1\n```");
+    expect(fenced).toContain("matrix[[0]] = 1");
+    expect(fenced).not.toContain("data-wikilink");
+
+    const inline = cycle("Use `arr[[i]]` here.");
+    expect(inline).toContain("`arr[[i]]`");
+  });
+
+  it("trims the whitespace inside the brackets", () => {
+    expect(cycle("[[  Ghidra Basics  ]]")).toContain("[[Ghidra Basics]]");
+  });
+
+  it("does not join brackets that sit on different lines", () => {
+    const html = markdownToHtml("Opening [[\nand closing ]] later.");
+    expect(html).not.toContain("data-wikilink");
+
+    const out = cycle("Opening [[\nand closing ]] later.");
+    expect(cycle(out)).toBe(out);
+  });
+});
+
+describe("images", () => {
+  const context = { pageDir: "/vault/notebooks/RE/Static" };
+
+  it("keeps the path relative when saved", () => {
+    const html = markdownToHtml("![a shot](assets/shot.png)", context);
+
+    // Displayed through a URL the webview can load...
+    expect(html).toContain("asset://localhost/");
+    // ...but written back exactly as it was.
+    expect(htmlToMarkdown(html)).toBe("![a shot](assets/shot.png)");
+  });
+
+  it("does not rewrite an external image", () => {
+    const markdown = "![logo](https://example.com/logo.png)";
+    const html = markdownToHtml(markdown, context);
+
+    expect(html).toContain("https://example.com/logo.png");
+    expect(htmlToMarkdown(html)).toBe(markdown);
+  });
+
+  it("repeated saves do not accumulate a local path", () => {
+    const once = htmlToMarkdown(markdownToHtml("![x](assets/a.png)", context));
+    const twice = htmlToMarkdown(markdownToHtml(once, context));
+
+    expect(twice).toBe(once);
+    expect(twice).not.toContain("/vault/");
+  });
+});
+
+describe("parentDir", () => {
+  it("handles both platforms' separators", () => {
+    expect(parentDir("/vault/section/page.md")).toBe("/vault/section");
+    expect(parentDir("C:\\vault\\section\\page.md")).toBe("C:\\vault\\section");
   });
 });

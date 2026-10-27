@@ -47,3 +47,9 @@ export const deleteItem = (vaultPath: string, path: string) =>
   invoke<void>("delete_item", { vaultPath, path });
 
 export const revealVault = (path: string) => invoke<void>("reveal_vault", { path });
+
+/** Store a pasted or dropped file beside the page; returns its vault-relative path. */
+export const saveAsset = (pagePath: string, filename: string, dataBase64: string) =>
+  invoke<string>("save_asset", { pagePath, filename, dataBase64 });
+
+export const openExternal = (url: string) => invoke<void>("open_external", { url });

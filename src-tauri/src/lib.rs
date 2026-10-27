@@ -45,8 +45,53 @@ fn open_vault(app: tauri::AppHandle, path: String) -> Result<Vec<TreeNode>, Stri
     }
 
     vault::ensure(&root)?;
+
+    // Images are shown straight from the vault folder, which the webview may not read
+    // until the folder is let through the asset protocol scope. The vault is chosen at
+    // runtime, so this cannot be a static entry in tauri.conf.json.
+    //
+    // Reported rather than ignored: if this fails the notes still open, but every
+    // image in them renders as a broken box, which is otherwise baffling.
+    app.asset_protocol_scope()
+        .allow_directory(&root, true)
+        .map_err(|e| format!("notes opened, but images cannot be shown from this folder: {e}"))?;
+
     write_config(&app, &Config { last_vault: Some(path) });
     vault::read_tree(&root)
+}
+
+/// Store a pasted or dropped file next to the page, returning the relative path to
+/// write into the Markdown. `data_base64` carries the bytes, since that survives the
+/// JavaScript bridge without the cost of sending a large array of numbers.
+#[tauri::command]
+fn save_asset(page_path: String, filename: String, data_base64: String) -> Result<String, String> {
+    use base64::Engine;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("that file could not be read: {e}"))?;
+
+    vault::save_asset(Path::new(&page_path), &filename, &bytes)
+}
+
+/// Open a link in the person's own browser.
+///
+/// Without this, following a link inside the editor would replace the app's own window
+/// with the web page and leave no way back.
+#[tauri::command]
+fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    // Anything that is not plainly a web link is refused rather than handed to the
+    // system opener, which would otherwise act on file: or custom schemes.
+    let lowered = url.trim().to_ascii_lowercase();
+    if !(lowered.starts_with("http://") || lowered.starts_with("https://")) {
+        return Err("only http and https links can be opened".into());
+    }
+
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("could not open the link: {e}"))
 }
 
 #[tauri::command]
@@ -162,6 +207,8 @@ pub fn run() {
             rename_item,
             delete_item,
             reveal_vault,
+            save_asset,
+            open_external,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,8 +1,14 @@
 import { useEditor, EditorContent, type Editor as TipTapEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useEffect, useRef, useState } from "react";
+import Image from "@tiptap/extension-image";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useRef, useState } from "react";
+import * as api from "../lib/api";
 import type { Page } from "../lib/api";
-import { htmlToMarkdown, markdownToHtml } from "../lib/markdown";
+import { htmlToMarkdown, markdownToHtml, parentDir } from "../lib/markdown";
+import { WikiLink } from "./WikiLink";
+import Outline, { type OutlineItem } from "./Outline";
+import LinkDialog from "./LinkDialog";
 
 export type SaveStatus = "saved" | "unsaved" | "saving" | "error";
 
@@ -12,15 +18,69 @@ interface Props {
   status: SaveStatus;
   onBodyChange: (markdown: string) => void;
   onTitleCommit: (title: string) => void;
+  /** Follow a [[wiki link]]; returns false when no page of that title exists. */
+  onOpenWikiLink: (title: string) => boolean;
+  /** Whether a [[wiki link]] points at a page that exists, for styling. */
+  resolveWikiLink: (title: string) => boolean;
+  onError: (message: string) => void;
 }
 
-export default function Editor({ pagePath, page, status, onBodyChange, onTitleCommit }: Props) {
+/** Carries the vault-relative path back out when the page is saved. */
+const VaultImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      "data-rel": {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-rel"),
+        renderHTML: (attributes) =>
+          attributes["data-rel"] ? { "data-rel": attributes["data-rel"] as string } : {},
+      },
+    };
+  },
+});
+
+export default function Editor({
+  pagePath,
+  page,
+  status,
+  onBodyChange,
+  onTitleCommit,
+  onOpenWikiLink,
+  resolveWikiLink,
+  onError,
+}: Props) {
   const [title, setTitle] = useState(page.title);
+  const [outline, setOutline] = useState<OutlineItem[]>([]);
+  const [activeHeading, setActiveHeading] = useState<number | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [docVersion, setDocVersion] = useState(0);
 
   // True while we are pushing a freshly loaded page into the editor. Without it,
   // loading a page would look like the person typing and immediately save the new
   // page's content over whatever was there.
   const loading = useRef(false);
+  // The editor's own handlers are registered once, when it is created, so anything
+  // they call has to be reached through a ref. A captured callback would still be
+  // holding the page that was open at mount — which made following a link to a page
+  // look like a no-op, because the navigation thought it was already there.
+  const pagePathRef = useRef(pagePath);
+  pagePathRef.current = pagePath;
+  const openWikiLinkRef = useRef(onOpenWikiLink);
+  openWikiLinkRef.current = onOpenWikiLink;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const readOutline = useCallback((editor: TipTapEditor) => {
+    const items: OutlineItem[] = [];
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === "heading") {
+        items.push({ level: node.attrs.level as number, text: node.textContent, pos });
+      }
+    });
+    setOutline(items);
+  }, []);
 
   const editor = useEditor({
     extensions: [
@@ -29,27 +89,143 @@ export default function Editor({ pagePath, page, status, onBodyChange, onTitleCo
         // Clicking a link must not navigate the window away from the app.
         link: { openOnClick: false },
       }),
+      VaultImage.configure({ inline: false }),
+      WikiLink,
     ],
-    content: markdownToHtml(page.body),
+    content: markdownToHtml(page.body, { pageDir: parentDir(pagePath) }),
+    onCreate: ({ editor }) => readOutline(editor),
     onUpdate: ({ editor }) => {
+      readOutline(editor);
+      setDocVersion((v) => v + 1);
       if (loading.current) return;
       onBodyChange(htmlToMarkdown(editor.getHTML()));
     },
+    onSelectionUpdate: ({ editor }) => {
+      // Highlight the heading the caret currently sits under.
+      const caret = editor.state.selection.from;
+      let current: number | null = null;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "heading" && pos <= caret) current = pos;
+      });
+      setActiveHeading(current);
+    },
     editorProps: {
       attributes: { class: "prose", spellcheck: "true" },
+      handlePaste: (_view, event) => insertDroppedFiles(event.clipboardData?.files),
+      handleDrop: (_view, _pos, _slice, _moved) => {
+        // Returning false lets ProseMirror handle text and in-document drags itself.
+        return false;
+      },
+      handleDOMEvents: {
+        drop: (_view, event) => {
+          const handled = insertDroppedFiles((event as DragEvent).dataTransfer?.files);
+          if (handled) event.preventDefault();
+          return handled;
+        },
+        dragover: (_view, event) => {
+          // Required for drop to fire at all.
+          if ((event as DragEvent).dataTransfer?.types.includes("Files")) {
+            event.preventDefault();
+          }
+          return false;
+        },
+      },
+      handleClick: (_view, _pos, event) => {
+        const target = event.target as HTMLElement | null;
+
+        const anchor = target?.closest("a");
+        if (anchor) {
+          const href = anchor.getAttribute("href");
+          if (href) {
+            event.preventDefault();
+            api.openExternal(href).catch((e) => onErrorRef.current(String(e)));
+            return true;
+          }
+        }
+
+        const wiki = target?.closest("[data-wikilink]");
+        if (wiki) {
+          event.preventDefault();
+          const name = wiki.getAttribute("data-wikilink") ?? "";
+          if (!openWikiLinkRef.current(name)) {
+            onErrorRef.current(`No page called “${name}” yet.`);
+          }
+          return true;
+        }
+
+        return false;
+      },
     },
   });
+
+  /**
+   * Copy pasted or dropped files into the vault and insert them.
+   *
+   * Returns true when it took the files, which tells the editor not to also paste
+   * them as its own placeholder.
+   */
+  function insertDroppedFiles(list: FileList | null | undefined): boolean {
+    const files = Array.from(list ?? []).filter((f) => f.type.startsWith("image/"));
+    if (files.length === 0) return false;
+    void storeFiles(files);
+    return true;
+  }
+
+  const storeFiles = useCallback(
+    async (files: File[]) => {
+      for (const file of files) {
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const name = file.name || `pasted-${Date.now()}.${extensionFor(file.type)}`;
+          const rel = await api.saveAsset(pagePathRef.current, name, bytesToBase64(bytes));
+          const absolute = `${parentDir(pagePathRef.current)}/${rel}`;
+
+          editorRef.current
+            ?.chain()
+            .focus()
+            .insertContent({
+              type: "image",
+              attrs: { src: convertFileSrc(absolute), "data-rel": rel, alt: name },
+            })
+            .run();
+        } catch (e) {
+          onErrorRef.current(String(e));
+        }
+      }
+    },
+    [],
+  );
+
+  // storeFiles runs from handlers bound at editor creation, when `editor` is still null.
+  const editorRef = useRef<TipTapEditor | null>(null);
+  editorRef.current = editor;
 
   // Swap in a different page. Keyed on the path alone: keying on the body as well
   // would reset the cursor to the top on every autosave.
   useEffect(() => {
     if (!editor) return;
     loading.current = true;
-    editor.commands.setContent(markdownToHtml(page.body), { emitUpdate: false });
+    editor.commands.setContent(markdownToHtml(page.body, { pageDir: parentDir(pagePath) }), {
+      emitUpdate: false,
+    });
     loading.current = false;
+    readOutline(editor);
     setTitle(page.title);
+    setActiveHeading(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, pagePath]);
+
+  // Mark links whose page does not exist. Done over the rendered DOM rather than as a
+  // node attribute, because whether a link resolves depends on the rest of the vault,
+  // which is not the page's own content and must not end up saved into it.
+  useEffect(() => {
+    const root = editor?.view.dom;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>("[data-wikilink]").forEach((el) => {
+      const name = el.getAttribute("data-wikilink") ?? "";
+      el.classList.toggle("wikilink-missing", !resolveWikiLink(name));
+    });
+  }, [editor, docVersion, pagePath, resolveWikiLink]);
 
   const commitTitle = () => {
     const next = title.trim();
@@ -58,6 +234,13 @@ export default function Editor({ pagePath, page, status, onBodyChange, onTitleCo
       return;
     }
     if (next !== page.title) onTitleCommit(next);
+  };
+
+  const jumpTo = (pos: number) => {
+    if (!editor) return;
+    editor.chain().focus().setTextSelection(pos + 1).run();
+    const dom = editor.view.nodeDOM(pos);
+    if (dom instanceof HTMLElement) dom.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
@@ -81,11 +264,56 @@ export default function Editor({ pagePath, page, status, onBodyChange, onTitleCo
         <span className={`status status-${status}`}>{statusLabel(status)}</span>
       </header>
 
-      {editor && <Toolbar editor={editor} />}
+      {editor && (
+        <Toolbar
+          editor={editor}
+          onLink={() => setLinkOpen(true)}
+          onPickImage={() => fileInput.current?.click()}
+        />
+      )}
 
-      <div className="editor-scroll" onClick={() => editor?.commands.focus()}>
-        <EditorContent editor={editor} />
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) void storeFiles(files);
+          // Allow picking the same file twice in a row.
+          e.target.value = "";
+        }}
+      />
+
+      <div className="editor-body">
+        <div
+          className="editor-scroll"
+          onClick={(e) => {
+            // Only the margin around the text, so clicks on links are left alone.
+            if (e.target === e.currentTarget) editor?.commands.focus();
+          }}
+        >
+          <EditorContent editor={editor} />
+        </div>
+
+        <Outline items={outline} activePos={activeHeading} onJump={jumpTo} />
       </div>
+
+      {linkOpen && editor && (
+        <LinkDialog
+          initialUrl={(editor.getAttributes("link").href as string) ?? ""}
+          onApply={(url) => {
+            editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+            setLinkOpen(false);
+          }}
+          onRemove={() => {
+            editor.chain().focus().extendMarkRange("link").unsetLink().run();
+            setLinkOpen(false);
+          }}
+          onCancel={() => setLinkOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -103,7 +331,36 @@ function statusLabel(status: SaveStatus) {
   }
 }
 
-function Toolbar({ editor }: { editor: TipTapEditor }) {
+function extensionFor(mime: string): string {
+  const known: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+  };
+  return known[mime] ?? "png";
+}
+
+/** Base64 in chunks: a large screenshot overflows the argument list in one go. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function Toolbar({
+  editor,
+  onLink,
+  onPickImage,
+}: {
+  editor: TipTapEditor;
+  onLink: () => void;
+  onPickImage: () => void;
+}) {
   const heading = (level: 1 | 2 | 3) => ({
     label: `H${level}`,
     title: `Heading ${level}`,
@@ -177,6 +434,27 @@ function Toolbar({ editor }: { editor: TipTapEditor }) {
         title: "Divider",
         active: false,
         run: () => editor.chain().focus().setHorizontalRule().run(),
+      },
+    ],
+    [
+      {
+        label: "🔗",
+        title: "Link",
+        active: editor.isActive("link"),
+        run: onLink,
+      },
+      {
+        label: "🖼",
+        title: "Insert image — you can also paste or drag one in",
+        active: false,
+        run: onPickImage,
+      },
+      {
+        label: "[[ ]]",
+        title: "Link to another page by title",
+        active: editor.isActive("wikiLink"),
+        run: () =>
+          editor.chain().focus().insertContent({ type: "wikiLink", attrs: { target: "Page" } }).run(),
       },
     ],
   ];

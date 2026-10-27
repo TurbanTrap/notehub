@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./lib/api";
 import type { Page, TreeNode } from "./lib/api";
 import Editor, { type SaveStatus } from "./components/Editor";
@@ -132,20 +132,77 @@ export default function App() {
     if (picked) await loadVault(picked);
   };
 
-  const selectPage = async (path: string) => {
-    if (path === activePath) return;
-    // Write the current page before the editor's content is replaced, or the pending
-    // edit would be saved against whichever page is open when the timer fires.
-    await flush();
-    try {
-      const page = await api.readPage(path);
-      setActivePath(path);
-      setActivePage(page);
-      setStatus("saved");
-    } catch (e) {
-      setError(String(e));
-    }
-  };
+  const selectPage = useCallback(
+    async (path: string) => {
+      if (path === activePath) return;
+      // Write the current page before the editor's content is replaced, or the pending
+      // edit would be saved against whichever page is open when the timer fires.
+      await flush();
+      try {
+        const page = await api.readPage(path);
+        setActivePath(path);
+        setActivePage(page);
+        setStatus("saved");
+
+        // Open the folders leading to it, so arriving by a link does not leave the
+        // sidebar pointing somewhere else.
+        setExpanded((prev) => {
+          const next = new Set(prev);
+          const openAncestors = (nodes: TreeNode[]) => {
+            for (const node of nodes) {
+              if (node.kind !== "page" && path.startsWith(node.path)) {
+                next.add(node.path);
+                openAncestors(node.children);
+              }
+            }
+          };
+          openAncestors(tree);
+          return next;
+        });
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [activePath, flush, tree],
+  );
+
+  /**
+   * Page titles to paths, for `[[wiki links]]`.
+   *
+   * Matched case-insensitively, since nobody types a link with the capitalisation
+   * they used in the title. Where two pages share a title the first found wins; the
+   * link is ambiguous either way, and silently following one is better than failing.
+   */
+  const pageIndex = useMemo(() => {
+    const index = new Map<string, string>();
+    const walk = (nodes: TreeNode[]) => {
+      for (const node of nodes) {
+        if (node.kind === "page") {
+          const key = node.title.trim().toLowerCase();
+          if (!index.has(key)) index.set(key, node.path);
+        } else {
+          walk(node.children);
+        }
+      }
+    };
+    walk(tree);
+    return index;
+  }, [tree]);
+
+  const resolveWikiLink = useCallback(
+    (title: string) => pageIndex.has(title.trim().toLowerCase()),
+    [pageIndex],
+  );
+
+  const openWikiLink = useCallback(
+    (title: string) => {
+      const path = pageIndex.get(title.trim().toLowerCase());
+      if (!path) return false;
+      void selectPage(path);
+      return true;
+    },
+    [pageIndex, selectPage],
+  );
 
   const toggle = (path: string) =>
     setExpanded((prev) => {
@@ -317,6 +374,9 @@ export default function App() {
             onTitleCommit={(title) =>
               void rename({ kind: "page", title: activePage.title, path: activePath, children: [] }, title)
             }
+            onOpenWikiLink={openWikiLink}
+            resolveWikiLink={resolveWikiLink}
+            onError={setError}
           />
         ) : (
           <div className="empty">

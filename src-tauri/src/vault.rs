@@ -285,6 +285,60 @@ pub fn delete(root: &Path, target: &Path) -> Result<(), String> {
     std::fs::rename(&target_real, &dest).map_err(|e| format!("could not delete: {e}"))
 }
 
+/// Store a pasted or dropped file beside the page that references it, and return the
+/// path to write into the Markdown.
+///
+/// The returned path is relative to the page's own folder, never absolute: the whole
+/// point of the vault is that it can be moved, synced or copied to another machine
+/// and still resolve its own images.
+pub fn save_asset(page_path: &Path, filename: &str, bytes: &[u8]) -> Result<String, String> {
+    let dir = page_path
+        .parent()
+        .ok_or_else(|| "that page has no folder".to_string())?;
+    if !dir.is_dir() {
+        return Err("that page's folder no longer exists".into());
+    }
+
+    let assets = dir.join(ASSETS_DIR);
+    std::fs::create_dir_all(&assets).map_err(|e| format!("could not create assets folder: {e}"))?;
+
+    let (stem, ext) = split_filename(filename);
+    let file = paths::unique_path(&assets, &paths::slugify(&stem), &ext);
+    std::fs::write(&file, bytes).map_err(|e| format!("could not save the file: {e}"))?;
+
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    // Always a forward slash: Markdown paths are URLs, and this file may well be read
+    // on the other operating system tomorrow.
+    Ok(format!("{ASSETS_DIR}/{name}"))
+}
+
+/// Split an incoming filename into a stem and a safe extension.
+fn split_filename(filename: &str) -> (String, String) {
+    let trimmed = filename.trim();
+    let (stem, ext) = match trimmed.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), e.to_string()),
+        _ => (trimmed.to_string(), String::new()),
+    };
+
+    let ext: String = ext
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(10)
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    let stem = if stem.trim().is_empty() {
+        "file".to_string()
+    } else {
+        stem
+    };
+
+    (stem, ext)
+}
+
 fn write_meta(dir: &Path, file: &str, title: &str) -> Result<(), String> {
     let meta = Meta { title: title.to_string() };
     let json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
@@ -467,6 +521,79 @@ mod tests {
         assert!(outside.exists(), "the file outside the vault is untouched");
 
         std::fs::remove_file(&outside).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn assets_land_beside_the_page_with_a_relative_path() {
+        let root = temp_root();
+        ensure(&root).unwrap();
+        let nb = create_notebook(&root, "NB").unwrap();
+        let sec = create_section(Path::new(&nb.path), "S").unwrap();
+        let p = create_page(Path::new(&sec.path), "Page").unwrap();
+
+        let rel = save_asset(Path::new(&p.path), "Screen Shot 2026.png", b"fake png").unwrap();
+
+        assert!(rel.starts_with("assets/"), "path stays relative: {rel}");
+        assert!(rel.ends_with(".png"), "extension survives: {rel}");
+        assert!(Path::new(&sec.path).join(&rel).exists());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn two_assets_with_one_name_do_not_overwrite() {
+        let root = temp_root();
+        ensure(&root).unwrap();
+        let nb = create_notebook(&root, "NB").unwrap();
+        let sec = create_section(Path::new(&nb.path), "S").unwrap();
+        let p = create_page(Path::new(&sec.path), "Page").unwrap();
+
+        let a = save_asset(Path::new(&p.path), "image.png", b"first").unwrap();
+        let b = save_asset(Path::new(&p.path), "image.png", b"second").unwrap();
+
+        assert_ne!(a, b);
+        assert_eq!(std::fs::read(Path::new(&sec.path).join(&a)).unwrap(), b"first");
+        assert_eq!(std::fs::read(Path::new(&sec.path).join(&b)).unwrap(), b"second");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_asset_cannot_escape_its_folder_through_its_name() {
+        let root = temp_root();
+        ensure(&root).unwrap();
+        let nb = create_notebook(&root, "NB").unwrap();
+        let sec = create_section(Path::new(&nb.path), "S").unwrap();
+        let p = create_page(Path::new(&sec.path), "Page").unwrap();
+
+        let rel = save_asset(Path::new(&p.path), "../../../etc/passwd", b"nope").unwrap();
+
+        assert!(!rel.contains(".."), "traversal is slugified away: {rel}");
+        assert!(Path::new(&sec.path).join(&rel).exists());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_assets_folder_is_not_listed_as_a_section() {
+        let root = temp_root();
+        ensure(&root).unwrap();
+        let nb = create_notebook(&root, "NB").unwrap();
+        let sec = create_section(Path::new(&nb.path), "S").unwrap();
+        let p = create_page(Path::new(&sec.path), "Page").unwrap();
+        save_asset(Path::new(&p.path), "shot.png", b"x").unwrap();
+
+        let tree = read_tree(&root).unwrap();
+        let found = tree.iter().find(|n| n.title == "NB").unwrap();
+        let kinds: Vec<&str> = found.children[0]
+            .children
+            .iter()
+            .map(|c| c.kind.as_str())
+            .collect();
+
+        assert_eq!(kinds, vec!["page"], "assets/ stays out of the sidebar");
+
         std::fs::remove_dir_all(&root).ok();
     }
 
