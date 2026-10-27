@@ -181,6 +181,17 @@ pub fn create_section(parent: &Path, title: &str) -> Result<TreeNode, String> {
     })
 }
 
+/// Make a section folder at an exact path, rather than at one derived from a title.
+///
+/// `create_section` chooses its own folder name and renumbers it to avoid collisions,
+/// which is right when somebody types a name but wrong for the importer: that has
+/// already worked out the whole tree it is mirroring, and the paths inside it have to
+/// be the ones it decided on. Idempotent, so a parent can be ensured twice.
+pub fn ensure_section(dir: &Path, title: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("could not create section: {e}"))?;
+    write_meta(dir, SECTION_META, title)
+}
+
 pub fn create_page(parent: &Path, title: &str) -> Result<TreeNode, String> {
     if !parent.is_dir() {
         return Err("the parent folder no longer exists".into());

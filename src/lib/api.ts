@@ -152,3 +152,20 @@ export interface VaultChange {
 
 export const onVaultChange = (handler: (change: VaultChange) => void): Promise<UnlistenFn> =>
   listen<VaultChange>("vault-changed", (event) => handler(event.payload));
+
+/** What an import brought in. Counts are of things created, not things seen. */
+export interface ImportSummary {
+  notebookPath: string;
+  notebookTitle: string;
+  pages: number;
+  sections: number;
+  images: number;
+  /** Links between imported documents turned into wiki links. */
+  links: number;
+  skipped: string[];
+}
+
+export const pickImportFolder = () => invoke<string | null>("pick_import_folder");
+
+export const importFolder = (vaultPath: string, source: string, title?: string) =>
+  invoke<ImportSummary>("import_folder", { vaultPath, source, title });

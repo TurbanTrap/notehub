@@ -1,5 +1,6 @@
 mod fingerprint;
 mod history;
+mod import;
 mod index;
 mod page;
 mod paths;
@@ -54,7 +55,13 @@ struct SaveResult {
 }
 
 /// Ask the person to choose a folder for their notes.
-#[tauri::command]
+///
+/// `async` is not decoration. A command without it runs on the main thread, and
+/// `blocking_pick_folder` waits there for a result that only the main thread can
+/// deliver — so the window locks up the moment a folder is chosen. The `async` form
+/// runs the body on a worker thread instead, which is what the plugin's own
+/// documentation asks for.
+#[tauri::command(async)]
 fn pick_vault(app: tauri::AppHandle) -> Option<String> {
     app.dialog()
         .file()
@@ -63,6 +70,53 @@ fn pick_vault(app: tauri::AppHandle) -> Option<String> {
         .and_then(|p| p.into_path().ok())
         .map(|p| p.to_string_lossy().to_string())
 }
+
+/// Ask the person for a folder of existing Markdown to bring in.
+///
+/// `async` for the same reason as `pick_vault`: on the main thread this deadlocks.
+#[tauri::command(async)]
+fn pick_import_folder(app: tauri::AppHandle) -> Option<String> {
+    app.dialog()
+        .file()
+        .set_title("Choose a folder of Markdown files to import")
+        .blocking_pick_folder()
+        .and_then(|p| p.into_path().ok())
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+/// Copy a folder of Markdown into the vault as a new notebook.
+///
+/// Nothing in the source folder is changed; it is read and copied. When no title is
+/// given the folder's own name is used, which is almost always what was meant.
+#[tauri::command(async)]
+fn import_folder(
+    app: tauri::AppHandle,
+    vault_path: String,
+    source: String,
+    title: Option<String>,
+) -> Result<import::ImportSummary, String> {
+    let source_path = PathBuf::from(&source);
+    let fallback = source_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Imported".into());
+    let title = clean_title(title.as_deref().unwrap_or_default(), &fallback);
+
+    let summary = import::import_folder(Path::new(&vault_path), &source_path, &title)?;
+
+    // A whole notebook at once, so the index is rebuilt rather than nudged.
+    if let Ok(db) = index_db(&app, &vault_path) {
+        let _ = index::reindex(&db, Path::new(&vault_path));
+    }
+
+    Ok(summary)
+}
+
+// Everything below that reads or writes files, or touches the search index, is marked
+// `#[tauri::command(async)]`. A plain command runs on the main thread, which is also
+// the thread drawing the window: a slow one freezes the app. Only the three commands
+// that hand work straight to the system — reading the stored vault path, revealing a
+// folder, opening a link — stay on it, and none of them waits for anything.
 
 /// The vault opened last time, if it is still on disk. A folder that has gone away —
 /// an unmounted drive, a sync folder not yet downloaded — is reported as absent so the
@@ -73,7 +127,7 @@ fn last_vault(app: tauri::AppHandle) -> Option<String> {
     Path::new(&path).is_dir().then_some(path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_vault(app: tauri::AppHandle, path: String) -> Result<OpenResult, String> {
     let root = PathBuf::from(&path);
     if !root.is_dir() {
@@ -117,7 +171,7 @@ fn open_vault(app: tauri::AppHandle, path: String) -> Result<OpenResult, String>
 /// Store a pasted or dropped file next to the page, returning the relative path to
 /// write into the Markdown. `data_base64` carries the bytes, since that survives the
 /// JavaScript bridge without the cost of sending a large array of numbers.
-#[tauri::command]
+#[tauri::command(async)]
 fn save_asset(page_path: String, filename: String, data_base64: String) -> Result<String, String> {
     use base64::Engine;
 
@@ -141,13 +195,13 @@ fn index_db(app: &tauri::AppHandle, vault_path: &str) -> Result<PathBuf, String>
 ///
 /// Also catches notes that arrived from the other machine through iCloud or Dropbox,
 /// since those change on disk without this app ever touching them.
-#[tauri::command]
+#[tauri::command(async)]
 fn reindex(app: tauri::AppHandle, vault_path: String) -> Result<usize, String> {
     let db = index_db(&app, &vault_path)?;
     index::reindex(&db, Path::new(&vault_path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn search(
     app: tauri::AppHandle,
     vault_path: String,
@@ -158,7 +212,7 @@ fn search(
     index::search(&db, &query, limit.unwrap_or(60))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn backlinks(
     app: tauri::AppHandle,
     vault_path: String,
@@ -168,13 +222,13 @@ fn backlinks(
     index::backlinks(&db, &title)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn all_tags(app: tauri::AppHandle, vault_path: String) -> Result<Vec<TagCount>, String> {
     let db = index_db(&app, &vault_path)?;
     index::all_tags(&db)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pages_with_tag(
     app: tauri::AppHandle,
     vault_path: String,
@@ -185,7 +239,7 @@ fn pages_with_tag(
 }
 
 /// Replace a page's tags, keeping its body untouched.
-#[tauri::command]
+#[tauri::command(async)]
 fn set_tags(
     app: tauri::AppHandle,
     vault_path: String,
@@ -253,27 +307,27 @@ fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| format!("could not open the link: {e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_tree(vault_path: String) -> Result<Vec<TreeNode>, String> {
     vault::read_tree(Path::new(&vault_path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_notebook(vault_path: String, title: String) -> Result<TreeNode, String> {
     vault::create_notebook(Path::new(&vault_path), &clean_title(&title, "New Notebook"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_section(parent_path: String, title: String) -> Result<TreeNode, String> {
     vault::create_section(Path::new(&parent_path), &clean_title(&title, "New Section"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_page(parent_path: String, title: String) -> Result<TreeNode, String> {
     vault::create_page(Path::new(&parent_path), &clean_title(&title, "Untitled Page"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_page(path: String) -> Result<PageRead, String> {
     let loaded = page::load(Path::new(&path))?;
     Ok(PageRead {
@@ -292,7 +346,7 @@ fn read_page(path: String) -> Result<PageRead, String> {
 ///
 /// Passing no `base_hash` skips that check and writes unconditionally. Only callers
 /// that have just written the file themselves should do that.
-#[tauri::command]
+#[tauri::command(async)]
 fn save_page(
     app: tauri::AppHandle,
     vault_path: String,
@@ -498,7 +552,7 @@ fn history_root(app: &tauri::AppHandle, vault_path: &str) -> Result<PathBuf, Str
 }
 
 /// Earlier versions of a page that are still kept, newest first.
-#[tauri::command]
+#[tauri::command(async)]
 fn page_versions(
     app: tauri::AppHandle,
     vault_path: String,
@@ -509,7 +563,7 @@ fn page_versions(
 }
 
 /// The text of one earlier version, for previewing before restoring it.
-#[tauri::command]
+#[tauri::command(async)]
 fn read_version(
     app: tauri::AppHandle,
     vault_path: String,
@@ -529,7 +583,7 @@ fn read_version(
 /// no longer match the filename — and the tags, neither of which is what "go back to
 /// how this read yesterday" means. The text being replaced is snapshotted first, so a
 /// restore is itself undoable.
-#[tauri::command]
+#[tauri::command(async)]
 fn restore_version(
     app: tauri::AppHandle,
     vault_path: String,
@@ -559,12 +613,12 @@ fn restore_version(
     Ok(PageRead { page: next, hash })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rename_item(path: String, new_title: String) -> Result<TreeNode, String> {
     vault::rename(Path::new(&path), &new_title)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_item(vault_path: String, path: String) -> Result<(), String> {
     vault::delete(Path::new(&vault_path), Path::new(&path))
 }
@@ -644,6 +698,8 @@ pub fn run() {
             page_versions,
             read_version,
             restore_version,
+            pick_import_folder,
+            import_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

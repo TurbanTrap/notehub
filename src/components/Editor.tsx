@@ -1,6 +1,8 @@
 import { useEditor, EditorContent, type Editor as TipTapEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { LANGUAGES, lowlight } from "../lib/highlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../lib/api";
@@ -74,6 +76,8 @@ export default function Editor({
   const [activeHeading, setActiveHeading] = useState<number | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [docVersion, setDocVersion] = useState(0);
+  // Only the setter is wanted: this exists to re-render on every caret move.
+  const [, bumpCaret] = useState(0);
 
   // True while we are pushing a freshly loaded page into the editor. Without it,
   // loading a page would look like the person typing and immediately save the new
@@ -107,6 +111,16 @@ export default function Editor({
         heading: { levels: [1, 2, 3, 4] },
         // Clicking a link must not navigate the window away from the app.
         link: { openOnClick: false },
+        // Replaced below by the highlighting version; leaving both in would register
+        // the same node twice.
+        codeBlock: false,
+      }),
+      CodeBlockLowlight.configure({
+        lowlight,
+        // Matches what marked writes and what turndown reads, so the language on a
+        // fence survives a round trip through the file.
+        languageClassPrefix: "language-",
+        defaultLanguage: null,
       }),
       VaultImage.configure({ inline: false }),
       WikiLink,
@@ -120,6 +134,12 @@ export default function Editor({
       onBodyChange(htmlToMarkdown(editor.getHTML()));
     },
     onSelectionUpdate: ({ editor }) => {
+      // The toolbar reads the caret's surroundings as it renders, so moving the caret
+      // has to cause a render. Keying that off the active heading alone missed every
+      // move inside one section, which left Bold and Italic showing the wrong state
+      // and kept the code block's language menu from ever appearing.
+      bumpCaret((n) => n + 1);
+
       // Highlight the heading the caret currently sits under.
       const caret = editor.state.selection.from;
       let current: number | null = null;
@@ -514,6 +534,37 @@ function Toolbar({
           ))}
         </div>
       ))}
+
+      {/* Only while the caret is in a code block: a language menu on a paragraph
+          would be a control that does nothing. */}
+      {editor.isActive("codeBlock") && (
+        <div className="toolbar-group">
+          <select
+            className="tb-select"
+            aria-label="Code language"
+            title="How to colour this block"
+            value={(editor.getAttributes("codeBlock").language as string) || "plaintext"}
+            onMouseDown={(e) => e.stopPropagation()}
+            onChange={(e) =>
+              editor
+                .chain()
+                .focus()
+                .updateAttributes("codeBlock", {
+                  // Plain text is the absence of a language, not a language called
+                  // "plaintext" — writing that into the fence would be noise in the file.
+                  language: e.target.value === "plaintext" ? null : e.target.value,
+                })
+                .run()
+            }
+          >
+            {LANGUAGES.map((language) => (
+              <option key={language.id} value={language.id}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

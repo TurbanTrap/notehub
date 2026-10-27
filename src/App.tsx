@@ -49,6 +49,7 @@ export default function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pendingDelete, setPendingDelete] = useState<TreeNode | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -553,6 +554,24 @@ export default function App() {
     }
   };
 
+  const importFolder = async () => {
+    if (!vaultPath) return;
+    const source = await api.pickImportFolder();
+    if (!source) return;
+
+    setImporting(true);
+    try {
+      const summary = await api.importFolder(vaultPath, source);
+      await refreshTree();
+      setExpanded((prev) => new Set(prev).add(summary.notebookPath));
+      setNotice({ text: describeImport(summary) });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const restoreVersion = async (stamp: string) => {
     if (!vaultPath || !activePath) return;
     try {
@@ -685,6 +704,9 @@ export default function App() {
           >
             Show notes folder
           </button>
+          <button className="link-btn" disabled={importing} onClick={() => void importFolder()}>
+            {importing ? "Importing…" : "Import a folder…"}
+          </button>
           <button className="link-btn" onClick={chooseVault}>
             Switch folder
           </button>
@@ -783,6 +805,24 @@ export default function App() {
       )}
     </div>
   );
+}
+
+/** What the import actually did, in a sentence. */
+function describeImport(summary: api.ImportSummary): string {
+  const parts = [`${count(summary.pages, "page")} into “${summary.notebookTitle}”`];
+  if (summary.sections > 0) parts.push(count(summary.sections, "section"));
+  if (summary.links > 0) parts.push(`${count(summary.links, "link")} turned into wiki links`);
+  if (summary.images > 0) parts.push(`${count(summary.images, "image")} copied in`);
+
+  let text = `Imported ${parts.join(", ")}.`;
+  if (summary.skipped.length > 0) {
+    text += ` Skipped ${summary.skipped.length}: ${summary.skipped.slice(0, 3).join("; ")}.`;
+  }
+  return text;
+}
+
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
 function findFirstPage(nodes: TreeNode[]): TreeNode | null {
