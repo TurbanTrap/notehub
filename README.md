@@ -27,6 +27,14 @@ export DEVELOPER_DIR=/Library/Developer/CommandLineTools
 npm run tauri build
 ```
 
+The app bundle lands in `src-tauri/target/release/bundle/macos/NoteHub.app`. Copy it
+out of `target/` before using it, since a rebuild wipes that folder.
+
+The `.dmg` step at the end needs permission to control Finder (System Settings >
+Privacy & Security > Automation), and fails without it. That failure does not affect
+the `.app`, which is already built by then — a DMG is only needed to hand the app to
+someone else.
+
 ## Tests
 
 ```bash
