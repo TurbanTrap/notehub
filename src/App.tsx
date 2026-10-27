@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./lib/api";
-import type { Page, TreeNode } from "./lib/api";
+import type { LinkRef, Page, SearchHit, TreeNode } from "./lib/api";
 import Editor, { type SaveStatus } from "./components/Editor";
 import Sidebar from "./components/Sidebar";
+import SearchResults from "./components/SearchResults";
+import QuickSwitcher from "./components/QuickSwitcher";
 import ConfirmDialog from "./components/ConfirmDialog";
 import "./App.css";
 
 const AUTOSAVE_DELAY_MS = 700;
+const SEARCH_DELAY_MS = 150;
+/** One letter matches most of the vault; waiting for two keeps the list meaningful. */
+const MIN_QUERY = 2;
 
 export default function App() {
   const [booting, setBooting] = useState(true);
@@ -21,9 +26,16 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<TreeNode | null>(null);
 
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [backlinkList, setBacklinkList] = useState<LinkRef[]>([]);
+
   // The edit waiting to be written, and the timer that will write it. Held in refs so
-  // that flushing from an event handler always sees the latest value.
-  const pending = useRef<{ path: string; body: string } | null>(null);
+  // that flushing from an event handler always sees the latest value. The vault goes
+  // in with it, so flushing never has to reach for state that may have moved on.
+  const pending = useRef<{ vault: string; path: string; body: string } | null>(null);
   const timer = useRef<number | null>(null);
 
   const flush = useCallback(async () => {
@@ -37,7 +49,7 @@ export default function App() {
 
     setStatus("saving");
     try {
-      await api.savePage(job.path, job.body);
+      await api.savePage(job.vault, job.path, job.body);
       setStatus("saved");
     } catch (e) {
       setStatus("error");
@@ -47,12 +59,13 @@ export default function App() {
 
   const queueSave = useCallback(
     (path: string, body: string) => {
-      pending.current = { path, body };
+      if (!vaultPath) return;
+      pending.current = { vault: vaultPath, path, body };
       setStatus("unsaved");
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void flush(), AUTOSAVE_DELAY_MS);
     },
-    [flush],
+    [flush, vaultPath],
   );
 
   // Don't lose the last few hundred milliseconds of typing when the window is closed
@@ -69,9 +82,14 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "s") {
         e.preventDefault();
         void flush();
+      }
+      if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSwitcherOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -98,6 +116,11 @@ export default function App() {
         setActivePage(page);
       }
       setError(null);
+
+      // Catches notes that arrived from the other machine through a sync folder, which
+      // change on disk without this app involved. Not awaited: a cold index on a large
+      // vault should not hold up the first page appearing.
+      api.reindex(path).catch(() => undefined);
     } catch (e) {
       setError(String(e));
     }
@@ -122,6 +145,7 @@ export default function App() {
     if (!vaultPath) return;
     try {
       setTree(await api.readTree(vaultPath));
+      await api.reindex(vaultPath);
     } catch (e) {
       setError(String(e));
     }
@@ -166,6 +190,19 @@ export default function App() {
     [activePath, flush, tree],
   );
 
+  /** Every page in the vault, flattened, for the quick switcher. */
+  const flatPages = useMemo(() => {
+    const out: TreeNode[] = [];
+    const walk = (nodes: TreeNode[]) => {
+      for (const node of nodes) {
+        if (node.kind === "page") out.push(node);
+        else walk(node.children);
+      }
+    };
+    walk(tree);
+    return out;
+  }, [tree]);
+
   /**
    * Page titles to paths, for `[[wiki links]]`.
    *
@@ -175,19 +212,12 @@ export default function App() {
    */
   const pageIndex = useMemo(() => {
     const index = new Map<string, string>();
-    const walk = (nodes: TreeNode[]) => {
-      for (const node of nodes) {
-        if (node.kind === "page") {
-          const key = node.title.trim().toLowerCase();
-          if (!index.has(key)) index.set(key, node.path);
-        } else {
-          walk(node.children);
-        }
-      }
-    };
-    walk(tree);
+    for (const page of flatPages) {
+      const key = page.title.trim().toLowerCase();
+      if (!index.has(key)) index.set(key, page.path);
+    }
     return index;
-  }, [tree]);
+  }, [flatPages]);
 
   const resolveWikiLink = useCallback(
     (title: string) => pageIndex.has(title.trim().toLowerCase()),
@@ -203,6 +233,60 @@ export default function App() {
     },
     [pageIndex, selectPage],
   );
+
+  // Search, debounced so a fast typist does not queue a query per keystroke.
+  useEffect(() => {
+    const term = query.trim();
+    if (!vaultPath || term.length < MIN_QUERY) {
+      setHits([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      api
+        .search(vaultPath, term)
+        .then((found) => {
+          if (cancelled) return;
+          setHits(found);
+          setSearching(false);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setError(String(e));
+          setSearching(false);
+        });
+    }, SEARCH_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [query, vaultPath]);
+
+  // Which pages link here. Recomputed when the page changes and when the vault does,
+  // since a link is made on the other page, not this one.
+  useEffect(() => {
+    const title = activePage?.title;
+    if (!vaultPath || !title) {
+      setBacklinkList([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .backlinks(vaultPath, title)
+      .then((found) => {
+        if (!cancelled) setBacklinkList(found);
+      })
+      .catch(() => {
+        if (!cancelled) setBacklinkList([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultPath, activePage?.title, tree]);
 
   const toggle = (path: string) =>
     setExpanded((prev) => {
@@ -268,6 +352,15 @@ export default function App() {
     }
   };
 
+  const changeTags = async (tags: string[]) => {
+    if (!vaultPath || !activePath) return;
+    try {
+      setActivePage(await api.setTags(vaultPath, activePath, tags));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const confirmDelete = async () => {
     const node = pendingDelete;
     setPendingDelete(null);
@@ -319,6 +412,8 @@ export default function App() {
     );
   }
 
+  const searchMode = query.trim().length >= MIN_QUERY;
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -329,19 +424,50 @@ export default function App() {
           </button>
         </div>
 
-        <Sidebar
-          tree={tree}
-          activePath={activePath}
-          expanded={expanded}
-          onToggle={toggle}
-          onSelectPage={(p) => void selectPage(p)}
-          onAddSection={(p) => void addSection(p)}
-          onAddPage={(p) => void addPage(p)}
-          onRename={(node, title) => void rename(node, title)}
-          onDelete={setPendingDelete}
-        />
+        <div className="search-box">
+          <input
+            className="search-input"
+            value={query}
+            placeholder="Search notes…"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setQuery("");
+            }}
+          />
+          {query && (
+            <button className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
+              ✕
+            </button>
+          )}
+        </div>
+
+        {searchMode ? (
+          <SearchResults
+            query={query}
+            hits={hits}
+            busy={searching}
+            activePath={activePath}
+            onOpen={(p) => void selectPage(p)}
+            onTag={(tag) => setQuery(tag)}
+          />
+        ) : (
+          <Sidebar
+            tree={tree}
+            activePath={activePath}
+            expanded={expanded}
+            onToggle={toggle}
+            onSelectPage={(p) => void selectPage(p)}
+            onAddSection={(p) => void addSection(p)}
+            onAddPage={(p) => void addPage(p)}
+            onRename={(node, title) => void rename(node, title)}
+            onDelete={setPendingDelete}
+          />
+        )}
 
         <div className="sidebar-foot">
+          <button className="link-btn" onClick={() => setSwitcherOpen(true)}>
+            Go to page… <kbd>⌘K</kbd>
+          </button>
           <button
             className="link-btn"
             title={vaultPath}
@@ -377,6 +503,10 @@ export default function App() {
             onOpenWikiLink={openWikiLink}
             resolveWikiLink={resolveWikiLink}
             onError={setError}
+            backlinks={backlinkList}
+            onOpenPage={(p) => void selectPage(p)}
+            onTagsChange={(tags) => void changeTags(tags)}
+            onSearchTag={(tag) => setQuery(tag)}
           />
         ) : (
           <div className="empty">
@@ -385,6 +515,15 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {switcherOpen && (
+        <QuickSwitcher
+          vaultPath={vaultPath}
+          pages={flatPages}
+          onOpen={(p) => void selectPage(p)}
+          onClose={() => setSwitcherOpen(false)}
+        />
+      )}
 
       {pendingDelete && (
         <ConfirmDialog

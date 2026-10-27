@@ -1,3 +1,4 @@
+mod index;
 mod page;
 mod paths;
 mod vault;
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
+use index::{LinkRef, SearchHit, TagCount};
 use page::Page;
 use vault::TreeNode;
 
@@ -74,6 +76,94 @@ fn save_asset(page_path: String, filename: String, data_base64: String) -> Resul
     vault::save_asset(Path::new(&page_path), &filename, &bytes)
 }
 
+/// Where this vault's search index lives — outside the vault, in the app's cache.
+fn index_db(app: &tauri::AppHandle, vault_path: &str) -> Result<PathBuf, String> {
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("could not find the cache folder: {e}"))?;
+    Ok(index::db_path(&cache, Path::new(vault_path)))
+}
+
+/// Bring the search index in line with the vault.
+///
+/// Also catches notes that arrived from the other machine through iCloud or Dropbox,
+/// since those change on disk without this app ever touching them.
+#[tauri::command]
+fn reindex(app: tauri::AppHandle, vault_path: String) -> Result<usize, String> {
+    let db = index_db(&app, &vault_path)?;
+    index::reindex(&db, Path::new(&vault_path))
+}
+
+#[tauri::command]
+fn search(
+    app: tauri::AppHandle,
+    vault_path: String,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<SearchHit>, String> {
+    let db = index_db(&app, &vault_path)?;
+    index::search(&db, &query, limit.unwrap_or(60))
+}
+
+#[tauri::command]
+fn backlinks(
+    app: tauri::AppHandle,
+    vault_path: String,
+    title: String,
+) -> Result<Vec<LinkRef>, String> {
+    let db = index_db(&app, &vault_path)?;
+    index::backlinks(&db, &title)
+}
+
+#[tauri::command]
+fn all_tags(app: tauri::AppHandle, vault_path: String) -> Result<Vec<TagCount>, String> {
+    let db = index_db(&app, &vault_path)?;
+    index::all_tags(&db)
+}
+
+#[tauri::command]
+fn pages_with_tag(
+    app: tauri::AppHandle,
+    vault_path: String,
+    tag: String,
+) -> Result<Vec<LinkRef>, String> {
+    let db = index_db(&app, &vault_path)?;
+    index::pages_with_tag(&db, &tag)
+}
+
+/// Replace a page's tags, keeping its body untouched.
+#[tauri::command]
+fn set_tags(
+    app: tauri::AppHandle,
+    vault_path: String,
+    path: String,
+    tags: Vec<String>,
+) -> Result<Page, String> {
+    let target = Path::new(&path);
+    let mut existing = page::read(target)?;
+
+    // Normalised here rather than in the interface, so tags typed on two different
+    // days with different capitalisation still group together.
+    let mut cleaned: Vec<String> = Vec::new();
+    for tag in tags {
+        let tag = tag.trim().trim_start_matches('#').trim().to_string();
+        if tag.is_empty() || cleaned.iter().any(|t| t.eq_ignore_ascii_case(&tag)) {
+            continue;
+        }
+        cleaned.push(tag);
+    }
+
+    existing.tags = cleaned;
+    existing.updated = page::now_iso();
+    page::write(target, &existing)?;
+
+    let db = index_db(&app, &vault_path)?;
+    index::index_one(&db, target)?;
+
+    Ok(existing)
+}
+
 /// Open a link in the person's own browser.
 ///
 /// Without this, following a link inside the editor would replace the app's own window
@@ -121,7 +211,12 @@ fn read_page(path: String) -> Result<Page, String> {
 
 /// Save the body of a page, leaving its id, title and creation time alone.
 #[tauri::command]
-fn save_page(path: String, body: String) -> Result<Page, String> {
+fn save_page(
+    app: tauri::AppHandle,
+    vault_path: String,
+    path: String,
+    body: String,
+) -> Result<Page, String> {
     let target = Path::new(&path);
     let mut existing = page::read(target)?;
 
@@ -134,6 +229,14 @@ fn save_page(path: String, body: String) -> Result<Page, String> {
     existing.body = body;
     existing.updated = page::now_iso();
     page::write(target, &existing)?;
+
+    // Just this page, not the whole vault: this runs every time typing pauses.
+    // A failure here costs a stale search result, never the note itself, so it must
+    // not turn a successful save into an error.
+    if let Ok(db) = index_db(&app, &vault_path) {
+        let _ = index::index_one(&db, target);
+    }
+
     Ok(existing)
 }
 
@@ -209,6 +312,12 @@ pub fn run() {
             reveal_vault,
             save_asset,
             open_external,
+            reindex,
+            search,
+            backlinks,
+            all_tags,
+            pages_with_tag,
+            set_tags,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

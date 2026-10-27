@@ -9,6 +9,9 @@ import { htmlToMarkdown, markdownToHtml, parentDir } from "../lib/markdown";
 import { WikiLink } from "./WikiLink";
 import Outline, { type OutlineItem } from "./Outline";
 import LinkDialog from "./LinkDialog";
+import TagBar from "./TagBar";
+import Backlinks from "./Backlinks";
+import type { LinkRef } from "../lib/api";
 
 export type SaveStatus = "saved" | "unsaved" | "saving" | "error";
 
@@ -23,6 +26,10 @@ interface Props {
   /** Whether a [[wiki link]] points at a page that exists, for styling. */
   resolveWikiLink: (title: string) => boolean;
   onError: (message: string) => void;
+  backlinks: LinkRef[];
+  onOpenPage: (path: string) => void;
+  onTagsChange: (tags: string[]) => void;
+  onSearchTag: (tag: string) => void;
 }
 
 /** Carries the vault-relative path back out when the page is saved. */
@@ -49,6 +56,10 @@ export default function Editor({
   onOpenWikiLink,
   resolveWikiLink,
   onError,
+  backlinks,
+  onOpenPage,
+  onTagsChange,
+  onSearchTag,
 }: Props) {
   const [title, setTitle] = useState(page.title);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
@@ -264,6 +275,8 @@ export default function Editor({
         <span className={`status status-${status}`}>{statusLabel(status)}</span>
       </header>
 
+      <TagBar tags={page.tags} onChange={onTagsChange} onSearchTag={onSearchTag} />
+
       {editor && (
         <Toolbar
           editor={editor}
@@ -297,7 +310,10 @@ export default function Editor({
           <EditorContent editor={editor} />
         </div>
 
-        <Outline items={outline} activePos={activeHeading} onJump={jumpTo} />
+        <div className="side-panel">
+          <Outline items={outline} activePos={activeHeading} onJump={jumpTo} />
+          <Backlinks links={backlinks} onOpen={onOpenPage} />
+        </div>
       </div>
 
       {linkOpen && editor && (
