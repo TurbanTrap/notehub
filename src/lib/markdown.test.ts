@@ -278,6 +278,36 @@ describe("images", () => {
     // Most of a vault should look like Markdown, not like HTML.
     expect(htmlToMarkdown('<img src="assets/a.png" alt="x">')).toBe("![x](assets/a.png)");
   });
+
+  it("keeps a height as well as a width", () => {
+    const html = '<img src="assets/a.png" alt="x" width="320" height="180">';
+
+    expect(htmlToMarkdown(html)).toBe('<img src="assets/a.png" alt="x" width="320" height="180">');
+    expect(cycle(htmlToMarkdown(html))).toBe(htmlToMarkdown(html));
+  });
+
+  it("keeps the side the text runs down", () => {
+    const markdown = htmlToMarkdown('<img src="assets/a.png" alt="x" width="200" align="right">');
+
+    expect(markdown).toContain('align="right"');
+    expect(cycle(markdown)).toBe(markdown);
+  });
+
+  it("writes a wrapped image as HTML even when it was never resized", () => {
+    expect(htmlToMarkdown('<img src="assets/a.png" alt="x" align="left">')).toBe(
+      '<img src="assets/a.png" alt="x" align="left">',
+    );
+  });
+
+  it("ignores a size or a side that is not one we wrote", () => {
+    // The attribute can have been typed into the file by hand.
+    expect(htmlToMarkdown('<img src="assets/a.png" alt="x" width="wide" align="middle">')).toBe(
+      "![x](assets/a.png)",
+    );
+    expect(htmlToMarkdown('<img src="assets/a.png" alt="x" width="-5">')).toBe(
+      "![x](assets/a.png)",
+    );
+  });
 });
 
 describe("parentDir", () => {

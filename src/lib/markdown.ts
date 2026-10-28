@@ -122,6 +122,12 @@ turndown.addRule("highlight", {
   },
 });
 
+/** A whole number of pixels, or null — the attribute comes from an editable file. */
+function pixels(raw: string | null): number | null {
+  const value = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 /** The declarations of a style attribute this app recognises, in canonical form. */
 function knownStyles(style: string | null): string[] {
   const out: string[] = [];
@@ -167,14 +173,21 @@ turndown.addRule("image", {
     const alt = el.getAttribute("alt") || "";
     if (!src) return "";
 
-    // `![alt](src)` has nowhere to put a width, so an image that has been resized
-    // is written as the HTML that Markdown already allows. One that has not been
-    // resized keeps the plain form, which is what most of a vault should look like.
-    const width = el.getAttribute("width");
-    if (width) {
-      return `<img src="${escapeAttribute(src)}" alt="${escapeAttribute(alt)}" width="${escapeAttribute(width)}">`;
-    }
-    return `![${alt}](${src})`;
+    // `![alt](src)` has nowhere to put a size, or a side for the text to run down,
+    // so an image given either is written as the HTML that Markdown already allows —
+    // `align` included, which is the attribute other Markdown viewers honour for
+    // exactly this. An image given neither keeps the plain form, which is what most
+    // of a vault should look like.
+    const extra: string[] = [];
+    const width = pixels(el.getAttribute("width"));
+    const height = pixels(el.getAttribute("height"));
+    const align = el.getAttribute("align");
+    if (width) extra.push(`width="${width}"`);
+    if (height) extra.push(`height="${height}"`);
+    if (align === "left" || align === "right") extra.push(`align="${align}"`);
+
+    if (extra.length === 0) return `![${alt}](${src})`;
+    return `<img src="${escapeAttribute(src)}" alt="${escapeAttribute(alt)}" ${extra.join(" ")}>`;
   },
 });
 

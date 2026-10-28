@@ -4,7 +4,7 @@ import {
   ReactNodeViewRenderer,
   type Editor as TipTapEditor,
 } from "@tiptap/react";
-import { Extension } from "@tiptap/core";
+import { Extension, type Attribute } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -54,7 +54,10 @@ interface Props {
   onSearchTag: (tag: string) => void;
 }
 
-/** Carries the vault-relative path back out when the page is saved, and its width. */
+/**
+ * Carries back out, when the page is saved, everything the plain `![](…)` form has
+ * nowhere to put: the vault-relative path, the size, and the side the text runs down.
+ */
 const VaultImage = Image.extend({
   addAttributes() {
     return {
@@ -65,23 +68,48 @@ const VaultImage = Image.extend({
         renderHTML: (attributes) =>
           attributes["data-rel"] ? { "data-rel": attributes["data-rel"] as string } : {},
       },
-      width: {
+      width: pixelAttribute("width"),
+      height: pixelAttribute("height"),
+      align: {
         default: null,
         parseHTML: (element) => {
-          const raw = element.getAttribute("width");
-          const value = raw ? Number.parseInt(raw, 10) : NaN;
-          return Number.isFinite(value) ? value : null;
+          const value = element.getAttribute("align");
+          return value === "left" || value === "right" ? value : null;
         },
         renderHTML: (attributes) =>
-          attributes.width ? { width: String(attributes.width) } : {},
+          attributes.align ? { align: attributes.align as string } : {},
       },
     };
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(ImageView);
+    return ReactNodeViewRenderer(ImageView, {
+      // The element that sits in the flow of the page is this outer wrapper, not the
+      // one the component renders inside it, so the side the text runs down has to be
+      // carried out to it. Floating only the inner element changes nothing: the outer
+      // block still takes a whole line to itself and the text stays underneath.
+      attrs: ({ node }) => ({ "data-align": (node.attrs.align as string) ?? "none" }),
+    });
   },
 });
+
+/**
+ * A size in whole pixels, written as the plain HTML attribute of the same name.
+ *
+ * The value comes from a file that can be edited by hand, so anything that is not a
+ * positive whole number is treated as no size at all rather than passed along.
+ */
+function pixelAttribute(name: "width" | "height"): Attribute {
+  return {
+    default: null,
+    parseHTML: (element: HTMLElement) => {
+      const value = Number.parseInt(element.getAttribute(name) ?? "", 10);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    },
+    renderHTML: (attributes: Record<string, unknown>) =>
+      attributes[name] ? { [name]: String(attributes[name]) } : {},
+  };
+}
 
 /**
  * The highlighter.
@@ -142,6 +170,37 @@ const LineBreaks = Extension.create({
   },
 });
 
+/**
+ * Everything the page editor understands, in one place so that anything driving an
+ * editor — the page itself, a test — is working with the same set rather than a
+ * copy of it that can drift.
+ */
+export const editorExtensions = [
+  StarterKit.configure({
+    heading: { levels: [1, 2, 3, 4] },
+    // Clicking a link must not navigate the window away from the app.
+    link: { openOnClick: false },
+    // Replaced below by the highlighting version; leaving both in would register
+    // the same node twice.
+    codeBlock: false,
+  }),
+  CodeBlockLowlight.configure({
+    lowlight,
+    // Matches what marked writes and what turndown reads, so the language on a
+    // fence survives a round trip through the file.
+    languageClassPrefix: "language-",
+    defaultLanguage: null,
+  }),
+  VaultImage.configure({ inline: false }),
+  // Colour and font both hang off TextStyle, which is the <span> they share.
+  TextStyle,
+  Color,
+  FontFamily,
+  Marker,
+  WikiLink,
+  LineBreaks,
+];
+
 export default function Editor({
   pagePath,
   page,
@@ -196,31 +255,7 @@ export default function Editor({
   }, []);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3, 4] },
-        // Clicking a link must not navigate the window away from the app.
-        link: { openOnClick: false },
-        // Replaced below by the highlighting version; leaving both in would register
-        // the same node twice.
-        codeBlock: false,
-      }),
-      CodeBlockLowlight.configure({
-        lowlight,
-        // Matches what marked writes and what turndown reads, so the language on a
-        // fence survives a round trip through the file.
-        languageClassPrefix: "language-",
-        defaultLanguage: null,
-      }),
-      VaultImage.configure({ inline: false }),
-      // Colour and font both hang off TextStyle, which is the <span> they share.
-      TextStyle,
-      Color,
-      FontFamily,
-      Marker,
-      WikiLink,
-      LineBreaks,
-    ],
+    extensions: editorExtensions,
     content: markdownToHtml(page.body, { pageDir: parentDir(pagePath) }),
     onCreate: ({ editor }) => readOutline(editor),
     onUpdate: ({ editor }) => {
@@ -576,7 +611,7 @@ interface ToolbarItem {
   run: () => void;
 }
 
-function Toolbar({
+export function Toolbar({
   editor,
   onLink,
   onPickImage,

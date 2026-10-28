@@ -1433,6 +1433,12 @@ kbd {
   color: #16181d;
 }
 
+/* Except where the person picked a colour themselves: that one stays. The colours on
+   offer are all mid-tone and the highlighters all pale, so any pairing still reads. */
+.prose span[style*="color"] mark {
+  color: inherit;
+}
+
 .prose img.ProseMirror-selectednode {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -1782,6 +1788,34 @@ a:focus-visible {
   margin: 1em 0;
 }
 
+/* Text running down the side of a picture, the way a book or a newspaper sets it.
+   A float only affects what comes after it, so the image has to sit above the
+   paragraphs meant to wrap around it — the same as the anchor point in Word.
+
+   On `.node-image`, the wrapper the editor puts in the flow, rather than on the view
+   inside it: floating the inner element leaves the outer block holding a whole line. */
+.node-image[data-align="left"] {
+  float: left;
+  margin: 0.3em 1.4em 0.8em 0;
+}
+
+.node-image[data-align="right"] {
+  float: right;
+  margin: 0.3em 0 0.8em 1.4em;
+}
+
+.node-image[data-align="left"] .image-view,
+.node-image[data-align="right"] .image-view {
+  margin: 0;
+}
+
+/* Keeps a floated image inside the page rather than hanging out of the bottom of it. */
+.prose::after {
+  content: "";
+  display: block;
+  clear: both;
+}
+
 .image-frame {
   position: relative;
   display: inline-block;
@@ -1802,18 +1836,23 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
-/* A grip on each side, so an image can be narrowed from whichever edge is nearer
-   the text it needs to sit beside. */
+/* A grip on each side and at the bottom, plus the two bottom corners. The sides and
+   the bottom each move one dimension, so a picture can be stretched to fit the space
+   beside the text; a corner moves both at once. */
 .image-handle {
   position: absolute;
+  border: 1px solid var(--bg-raised);
+  border-radius: 5px;
+  background: var(--accent);
+}
+
+.image-handle-left,
+.image-handle-right {
   top: 50%;
   width: 10px;
   height: 42px;
   max-height: 60%;
   margin-top: -21px;
-  border: 1px solid var(--bg-raised);
-  border-radius: 5px;
-  background: var(--accent);
   cursor: ew-resize;
 }
 
@@ -1825,49 +1864,96 @@ a:focus-visible {
   right: -6px;
 }
 
+.image-handle-bottom {
+  left: 50%;
+  bottom: -6px;
+  width: 42px;
+  max-width: 60%;
+  height: 10px;
+  margin-left: -21px;
+  cursor: ns-resize;
+}
+
+/* Square, and sitting on the corner itself, which is the shape everything else uses
+   for "this one moves both ways". */
+.image-corner {
+  width: 12px;
+  height: 12px;
+  bottom: -7px;
+  border-radius: 3px;
+}
+
+.image-corner-left {
+  left: -7px;
+  cursor: nesw-resize;
+}
+
+.image-corner-right {
+  right: -7px;
+  cursor: nwse-resize;
+}
+
 .image-dragging {
   user-select: none;
 }
 
-.image-remove,
-.image-reset {
+/* Everything that acts on the image, gathered into one strip at its top corner,
+   rather than scattered around the edges where the grips now live. */
+.image-bar {
   position: absolute;
+  top: 6px;
+  right: 6px;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-raised);
-  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.image-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-dim);
   font-family: var(--font-ui);
   font-size: 11.5px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: var(--shadow);
 }
 
-.image-remove {
-  top: 6px;
-  right: 6px;
-  width: 24px;
-  height: 24px;
-  padding: 0;
+.image-tool:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.image-tool-on {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+.image-tool-text {
+  padding: 0 7px;
+}
+
+.image-tool-remove {
   color: var(--danger);
   font-size: 12px;
 }
 
-.image-remove:hover {
+.image-tool-remove:hover {
   background: var(--danger);
-  color: #fff;
   border-color: var(--danger);
-}
-
-.image-reset {
-  bottom: 6px;
-  right: 6px;
-  padding: 4px 8px;
-}
-
-.image-reset:hover {
-  background: var(--bg-hover);
+  color: #fff;
 }
 
 /* ---------- dropping a file in ---------- */
