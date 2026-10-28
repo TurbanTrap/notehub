@@ -82,7 +82,16 @@ turndown.addRule("image", {
     const el = node as HTMLElement;
     const src = el.getAttribute("data-rel") || el.getAttribute("src") || "";
     const alt = el.getAttribute("alt") || "";
-    return src ? `![${alt}](${src})` : "";
+    if (!src) return "";
+
+    // `![alt](src)` has nowhere to put a width, so an image that has been resized
+    // is written as the HTML that Markdown already allows. One that has not been
+    // resized keeps the plain form, which is what most of a vault should look like.
+    const width = el.getAttribute("width");
+    if (width) {
+      return `<img src="${escapeAttribute(src)}" alt="${escapeAttribute(alt)}" width="${escapeAttribute(width)}">`;
+    }
+    return `![${alt}](${src})`;
   },
 });
 
@@ -127,6 +136,11 @@ function stripTrailingSeparator(dir: string): string {
 export function parentDir(filePath: string): string {
   const cut = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
   return cut > 0 ? filePath.slice(0, cut) : filePath;
+}
+
+/** For a value going inside double quotes in an attribute we are writing ourselves. */
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
 function escapeHtml(value: string): string {

@@ -182,6 +182,44 @@ fn save_asset(page_path: String, filename: String, data_base64: String) -> Resul
     vault::save_asset(Path::new(&page_path), &filename, &bytes)
 }
 
+/// The image formats a dropped file is allowed to be.
+///
+/// An allowlist rather than "whatever the webview might render": a drop is the one
+/// place a file arrives by its path alone, and copying an arbitrary file into the
+/// notes because it was dragged over the window is not something to do quietly.
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
+
+fn is_image_path(path: &Path) -> bool {
+    path.extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.as_str()))
+}
+
+/// Copy a file that is already on disk into the page's assets folder.
+///
+/// Dragging a file in gives us its path, not its bytes. Reading it in the web layer
+/// only to encode it as base64 and send it back across the bridge would be a long way
+/// round for a screenshot, so the copy happens here.
+#[tauri::command(async)]
+fn add_asset_from_path(page_path: String, source: String) -> Result<String, String> {
+    let source = Path::new(&source);
+    let name = source
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .ok_or_else(|| "that file has no name".to_string())?;
+
+    if !source.is_file() {
+        return Err(format!("{name} is not a file"));
+    }
+
+    if !is_image_path(source) {
+        return Err(format!("{name} is not an image NoteHub can show"));
+    }
+
+    let bytes = std::fs::read(source).map_err(|e| format!("could not read {name}: {e}"))?;
+    vault::save_asset(Path::new(&page_path), &name, &bytes)
+}
+
 /// Where this vault's search index lives — outside the vault, in the app's cache.
 fn index_db(app: &tauri::AppHandle, vault_path: &str) -> Result<PathBuf, String> {
     let cache = app
@@ -484,6 +522,23 @@ mod tests {
     }
 
     #[test]
+    fn only_images_can_be_dropped_into_a_page() {
+        // A drop is the one place a file arrives by its path alone, so what counts as
+        // an image is decided here rather than by whatever the webview would render.
+        assert!(is_image_path(Path::new("/tmp/shot.PNG")));
+        assert!(is_image_path(Path::new("/tmp/diagram.svg")));
+        assert!(is_image_path(Path::new("/tmp/photo.jpeg")));
+
+        assert!(!is_image_path(Path::new("/tmp/notes.md")));
+        assert!(!is_image_path(Path::new("/etc/passwd")));
+        assert!(!is_image_path(Path::new("/tmp/installer.dmg")));
+        assert!(!is_image_path(Path::new("/tmp/no-extension")));
+        // A name that only looks like one.
+        assert!(!is_image_path(Path::new("/tmp/png")));
+        assert!(!is_image_path(Path::new("/tmp/shot.png.exe")));
+    }
+
+    #[test]
     fn a_conflict_copy_does_not_touch_the_file_that_arrived() {
         let (path, arrived) = temp_page("their text, from the other machine");
         let before = std::fs::read_to_string(&path).unwrap();
@@ -706,6 +761,7 @@ pub fn run() {
             delete_item,
             reveal_vault,
             save_asset,
+            add_asset_from_path,
             open_external,
             reindex,
             search,

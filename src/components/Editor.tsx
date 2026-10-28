@@ -1,6 +1,16 @@
-import { useEditor, EditorContent, type Editor as TipTapEditor } from "@tiptap/react";
+import {
+  useEditor,
+  EditorContent,
+  ReactNodeViewRenderer,
+  type Editor as TipTapEditor,
+} from "@tiptap/react";
+import { Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import ImageView from "./ImageView";
+import { detectOs, modLabel } from "../lib/platform";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { LANGUAGES, lowlight } from "../lib/highlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -40,7 +50,7 @@ interface Props {
   onSearchTag: (tag: string) => void;
 }
 
-/** Carries the vault-relative path back out when the page is saved. */
+/** Carries the vault-relative path back out when the page is saved, and its width. */
 const VaultImage = Image.extend({
   addAttributes() {
     return {
@@ -51,6 +61,41 @@ const VaultImage = Image.extend({
         renderHTML: (attributes) =>
           attributes["data-rel"] ? { "data-rel": attributes["data-rel"] as string } : {},
       },
+      width: {
+        default: null,
+        parseHTML: (element) => {
+          const raw = element.getAttribute("width");
+          const value = raw ? Number.parseInt(raw, 10) : NaN;
+          return Number.isFinite(value) ? value : null;
+        },
+        renderHTML: (attributes) =>
+          attributes.width ? { width: String(attributes.width) } : {},
+      },
+    };
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(ImageView);
+  },
+});
+
+/**
+ * Enter ends the paragraph; Shift+Enter breaks the line inside it.
+ *
+ * Both are what the editor does anyway, and both are stated here on purpose. The
+ * bindings go in at a priority above the lists and the code block, so that whatever
+ * else a future extension brings with it, these two keys keep behaving the way they
+ * do in Word and Docs. `setHardBreak` reports false when it cannot apply — inside a
+ * code block, where a plain newline is what is wanted — and returning false there
+ * lets the usual handling take over.
+ */
+const LineBreaks = Extension.create({
+  name: "lineBreaks",
+  priority: 1000,
+
+  addKeyboardShortcuts() {
+    return {
+      "Shift-Enter": () => this.editor.commands.setHardBreak(),
     };
   },
 });
@@ -76,6 +121,8 @@ export default function Editor({
   const [activeHeading, setActiveHeading] = useState<number | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [docVersion, setDocVersion] = useState(0);
+  /** True while a file is being dragged over the page, to show where it will land. */
+  const [dropping, setDropping] = useState(false);
   // Only the setter is wanted: this exists to re-render on every caret move.
   const [, bumpCaret] = useState(0);
 
@@ -94,6 +141,7 @@ export default function Editor({
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
   const fileInput = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const readOutline = useCallback((editor: TipTapEditor) => {
     const items: OutlineItem[] = [];
@@ -124,6 +172,7 @@ export default function Editor({
       }),
       VaultImage.configure({ inline: false }),
       WikiLink,
+      LineBreaks,
     ],
     content: markdownToHtml(page.body, { pageDir: parentDir(pagePath) }),
     onCreate: ({ editor }) => readOutline(editor),
@@ -150,25 +199,10 @@ export default function Editor({
     },
     editorProps: {
       attributes: { class: "prose", spellcheck: "true" },
-      handlePaste: (_view, event) => insertDroppedFiles(event.clipboardData?.files),
-      handleDrop: (_view, _pos, _slice, _moved) => {
-        // Returning false lets ProseMirror handle text and in-document drags itself.
-        return false;
-      },
-      handleDOMEvents: {
-        drop: (_view, event) => {
-          const handled = insertDroppedFiles((event as DragEvent).dataTransfer?.files);
-          if (handled) event.preventDefault();
-          return handled;
-        },
-        dragover: (_view, event) => {
-          // Required for drop to fire at all.
-          if ((event as DragEvent).dataTransfer?.types.includes("Files")) {
-            event.preventDefault();
-          }
-          return false;
-        },
-      },
+      // Paste only. A file dragged in from Finder or Explorer never reaches these:
+      // the window layer takes the drop before the page sees it, which is why that
+      // arrives through the webview's own drag-drop event further down.
+      handlePaste: (_view, event) => insertPastedFiles(event.clipboardData?.files),
       handleClick: (_view, _pos, event) => {
         const target = event.target as HTMLElement | null;
 
@@ -198,17 +232,30 @@ export default function Editor({
   });
 
   /**
-   * Copy pasted or dropped files into the vault and insert them.
+   * Copy pasted files into the vault and insert them.
    *
    * Returns true when it took the files, which tells the editor not to also paste
    * them as its own placeholder.
    */
-  function insertDroppedFiles(list: FileList | null | undefined): boolean {
+  function insertPastedFiles(list: FileList | null | undefined): boolean {
     const files = Array.from(list ?? []).filter((f) => f.type.startsWith("image/"));
     if (files.length === 0) return false;
     void storeFiles(files);
     return true;
   }
+
+  /** Put an image that is now in the vault into the page at the caret. */
+  const insertAsset = useCallback((rel: string, alt: string) => {
+    const absolute = `${parentDir(pagePathRef.current)}/${rel}`;
+    editorRef.current
+      ?.chain()
+      .focus()
+      .insertContent({
+        type: "image",
+        attrs: { src: convertFileSrc(absolute), "data-rel": rel, alt },
+      })
+      .run();
+  }, []);
 
   const storeFiles = useCallback(
     async (files: File[]) => {
@@ -217,23 +264,31 @@ export default function Editor({
           const bytes = new Uint8Array(await file.arrayBuffer());
           const name = file.name || `pasted-${Date.now()}.${extensionFor(file.type)}`;
           const rel = await api.saveAsset(pagePathRef.current, name, bytesToBase64(bytes));
-          const absolute = `${parentDir(pagePathRef.current)}/${rel}`;
-
-          editorRef.current
-            ?.chain()
-            .focus()
-            .insertContent({
-              type: "image",
-              attrs: { src: convertFileSrc(absolute), "data-rel": rel, alt: name },
-            })
-            .run();
+          insertAsset(rel, name);
         } catch (e) {
           onErrorRef.current(String(e));
         }
       }
     },
-    [],
+    [insertAsset],
   );
+
+  /** Files dragged in from Finder or Explorer, which arrive as paths. */
+  const storePaths = useCallback(
+    async (paths: string[]) => {
+      for (const path of paths) {
+        try {
+          const rel = await api.addAssetFromPath(pagePathRef.current, path);
+          insertAsset(rel, rel.split("/").pop() ?? "");
+        } catch (e) {
+          onErrorRef.current(String(e));
+        }
+      }
+    },
+    [insertAsset],
+  );
+  const storePathsRef = useRef(storePaths);
+  storePathsRef.current = storePaths;
 
   // storeFiles runs from handlers bound at editor creation, when `editor` is still null.
   const editorRef = useRef<TipTapEditor | null>(null);
@@ -256,6 +311,59 @@ export default function Editor({
     setActiveHeading(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, pagePath, reloadToken]);
+
+  /*
+   * Files dragged in from the desktop.
+   *
+   * The window takes a file drop before the page ever sees it, so the usual HTML
+   * drag events never fire and the webview reports the drop itself instead. What it
+   * reports is paths, not file contents, which is why the copy happens in Rust.
+   *
+   * The event covers the whole window, including the sidebar and the panels, so the
+   * drop point is checked against the editor column before anything is written —
+   * dropping a screenshot on the notebook list should do nothing, not quietly file
+   * it into whichever page happens to be open.
+   */
+  useEffect(() => {
+    let stop: UnlistenFn | undefined;
+    let cancelled = false;
+
+    const overEditor = (position: { x: number; y: number }) => {
+      const scale = window.devicePixelRatio || 1;
+      const element = document.elementFromPoint(position.x / scale, position.y / scale);
+      return !!element && !!scrollRef.current?.contains(element);
+    };
+
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === "over") {
+          setDropping(overEditor(payload.position));
+          return;
+        }
+        if (payload.type === "drop") {
+          const wanted = overEditor(payload.position);
+          setDropping(false);
+          if (wanted && payload.paths.length) void storePathsRef.current(payload.paths);
+          return;
+        }
+        setDropping(false);
+      })
+      .then((unlisten) => {
+        // Unmounted before the listener was registered: stop it straight away.
+        if (cancelled) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => {
+        // Not running inside the app window — nothing to listen to, and dropping
+        // a file is not something the page can offer.
+      });
+
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, []);
 
   // Mark links whose page does not exist. Done over the rendered DOM rather than as a
   // node attribute, because whether a link resolves depends on the rest of the vault,
@@ -339,13 +447,15 @@ export default function Editor({
 
       <div className="editor-body">
         <div
-          className="editor-scroll"
+          ref={scrollRef}
+          className={`editor-scroll ${dropping ? "editor-dropping" : ""}`}
           onClick={(e) => {
             // Only the margin around the text, so clicks on links are left alone.
             if (e.target === e.currentTarget) editor?.commands.focus();
           }}
         >
           <EditorContent editor={editor} />
+          {dropping && <div className="drop-hint">Drop to add the image here</div>}
         </div>
 
         <div className="side-panel">
@@ -406,6 +516,19 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+interface ToolbarItem {
+  label: string;
+  /** Class that makes the label look like what it does — a bold B, an italic I. */
+  style?: string;
+  title: string;
+  /** A second line in the tooltip, for anything the title cannot say in two words. */
+  hint?: string;
+  /** The keyboard shortcut, already written for this platform. */
+  keys?: string;
+  active: boolean;
+  run: () => void;
+}
+
 function Toolbar({
   editor,
   onLink,
@@ -415,37 +538,48 @@ function Toolbar({
   onLink: () => void;
   onPickImage: () => void;
 }) {
+  const mod = modLabel(detectOs(navigator.userAgent));
+
   const heading = (level: 1 | 2 | 3) => ({
     label: `H${level}`,
     title: `Heading ${level}`,
+    keys: `${mod}⌥${level}`,
     active: editor.isActive("heading", { level }),
     run: () => editor.chain().focus().toggleHeading({ level }).run(),
   });
 
-  const groups = [
+  const groups: ToolbarItem[][] = [
     [heading(1), heading(2), heading(3)],
     [
       {
         label: "B",
+        style: "tb-bold",
         title: "Bold",
+        keys: `${mod}B`,
         active: editor.isActive("bold"),
         run: () => editor.chain().focus().toggleBold().run(),
       },
       {
         label: "I",
+        style: "tb-italic",
         title: "Italic",
+        keys: `${mod}I`,
         active: editor.isActive("italic"),
         run: () => editor.chain().focus().toggleItalic().run(),
       },
       {
         label: "U",
+        style: "tb-underline",
         title: "Underline",
+        keys: `${mod}U`,
         active: editor.isActive("underline"),
         run: () => editor.chain().focus().toggleUnderline().run(),
       },
       {
         label: "S",
+        style: "tb-strike",
         title: "Strikethrough",
+        keys: `${mod}⇧X`,
         active: editor.isActive("strike"),
         run: () => editor.chain().focus().toggleStrike().run(),
       },
@@ -454,18 +588,21 @@ function Toolbar({
       {
         label: "•",
         title: "Bulleted list",
+        keys: `${mod}⇧8`,
         active: editor.isActive("bulletList"),
         run: () => editor.chain().focus().toggleBulletList().run(),
       },
       {
         label: "1.",
         title: "Numbered list",
+        keys: `${mod}⇧7`,
         active: editor.isActive("orderedList"),
         run: () => editor.chain().focus().toggleOrderedList().run(),
       },
       {
         label: "❝",
         title: "Quote",
+        keys: `${mod}⇧B`,
         active: editor.isActive("blockquote"),
         run: () => editor.chain().focus().toggleBlockquote().run(),
       },
@@ -473,13 +610,18 @@ function Toolbar({
     [
       {
         label: "`",
+        style: "tb-mono",
         title: "Inline code",
+        keys: `${mod}E`,
         active: editor.isActive("code"),
         run: () => editor.chain().focus().toggleCode().run(),
       },
       {
         label: "{ }",
-        title: "Code block — keeps disassembly and hex dumps intact",
+        style: "tb-mono",
+        title: "Code block",
+        hint: "Keeps disassembly and hex dumps intact",
+        keys: `${mod}⌥C`,
         active: editor.isActive("codeBlock"),
         run: () => editor.chain().focus().toggleCodeBlock().run(),
       },
@@ -494,18 +636,22 @@ function Toolbar({
       {
         label: "🔗",
         title: "Link",
+        keys: `${mod}K`,
         active: editor.isActive("link"),
         run: onLink,
       },
       {
         label: "🖼",
-        title: "Insert image — you can also paste or drag one in",
+        title: "Insert image",
+        hint: "You can also paste one, or drag it in from a folder",
         active: false,
         run: onPickImage,
       },
       {
         label: "[[ ]]",
-        title: "Link to another page by title",
+        style: "tb-mono",
+        title: "Link to another page",
+        hint: "By its title, so the link survives a rename",
         active: editor.isActive("wikiLink"),
         run: () =>
           editor.chain().focus().insertContent({ type: "wikiLink", attrs: { target: "Page" } }).run(),
@@ -520,9 +666,15 @@ function Toolbar({
           {group.map((item) => (
             <button
               key={item.title}
-              className={`tb-btn ${item.active ? "tb-active" : ""}`}
-              title={item.title}
+              className={`tb-btn ${item.style ?? ""} ${item.active ? "tb-active" : ""}`}
+              // Not `title`: the native tooltip takes a second or more to appear and
+              // is easy to miss entirely. `data-tip` drives one drawn by the
+              // stylesheet, which shows at once and can carry the shortcut too.
+              data-tip={item.title}
+              data-keys={item.keys ?? ""}
+              data-hint={item.hint ?? ""}
               aria-label={item.title}
+              aria-keyshortcuts={item.keys}
               aria-pressed={item.active}
               // The editor loses focus on mousedown otherwise, and the command then
               // applies to no selection.

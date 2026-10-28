@@ -94,6 +94,10 @@ export const revealVault = (path: string) => invoke<void>("reveal_vault", { path
 export const saveAsset = (pagePath: string, filename: string, dataBase64: string) =>
   invoke<string>("save_asset", { pagePath, filename, dataBase64 });
 
+/** Copy an image already on disk into the page's assets; returns its relative path. */
+export const addAssetFromPath = (pagePath: string, source: string) =>
+  invoke<string>("add_asset_from_path", { pagePath, source });
+
 export const openExternal = (url: string) => invoke<void>("open_external", { url });
 
 export interface SearchHit {

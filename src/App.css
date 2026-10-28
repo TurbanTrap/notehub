@@ -9,6 +9,11 @@
   --bg-raised: #ffffff;
   --shadow: 0 8px 24px rgba(20, 16, 28, 0.14);
 
+  /* Tooltips stay dark in both themes, the way the system's own do: a pale tooltip
+     over pale chrome has to be outlined to be seen at all. */
+  --tip-bg: #2b2832;
+  --tip-text: #f4f2f7;
+
   --text: #1b1a1f;
   --text-dim: #6b6875;
   --border: #e2dfe8;
@@ -62,6 +67,9 @@
     --bg-raised: #26242c;
     --shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
 
+    --tip-bg: #3b3745;
+    --tip-text: #f4f2f7;
+
     --text: #eceaf0;
     --text-dim: #9d98a8;
     --border: #322f39;
@@ -98,6 +106,9 @@
   --bg-active: var(--accent-soft);
   --bg-raised: #26242c;
   --shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+
+  --tip-bg: #3b3745;
+  --tip-text: #f4f2f7;
 
   --text: #eceaf0;
   --text-dim: #9d98a8;
@@ -651,30 +662,61 @@ button {
   font-weight: 600;
 }
 
+/*
+ * The ribbon.
+ *
+ * It sits between the tag row and the page, so it needs enough surface of its own
+ * to read as a band of controls rather than four loose rows of text. The tint is
+ * drawn from the sidebar colour so it belongs to the chrome, not to the paper.
+ */
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
-  padding: 6px 48px 10px;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 48px;
+  border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+  background: linear-gradient(var(--bg-sidebar), color-mix(in srgb, var(--bg-sidebar) 60%, var(--bg)));
 }
 
+/* Separated by a rule rather than a gap: the groups mean something — text, then
+   lists, then blocks, then what links out — and a thin line says so. */
 .toolbar-group {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: 1px;
+  padding: 0 7px;
+  border-left: 1px solid var(--border);
+}
+
+.toolbar-group:first-child {
+  padding-left: 0;
+  border-left: 0;
 }
 
 .tb-btn {
-  min-width: 28px;
-  height: 26px;
-  padding: 0 6px;
+  position: relative;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 7px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   background: none;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 13.5px;
+  line-height: 1;
   cursor: pointer;
+  transition: background 90ms ease, color 90ms ease;
 }
+
+/* Each label looks like the thing it does, which is most of what makes a row of
+   letters readable at a glance. */
+.tb-bold { font-weight: 800; }
+.tb-italic { font-style: italic; font-family: var(--font-read); }
+.tb-underline { text-decoration: underline; text-underline-offset: 2px; }
+.tb-strike { text-decoration: line-through; }
+.tb-mono { font-family: var(--font-mono); font-size: 12px; }
 
 .tb-btn:hover {
   background: var(--bg-hover);
@@ -698,10 +740,22 @@ button {
   color: var(--text);
 }
 
+/* An underline in the accent, the way a pressed tab reads, rather than only a
+   change of weight — which was invisible on the buttons that are already bold. */
 .tb-active {
   background: var(--bg-active);
   color: var(--accent);
-  font-weight: 700;
+}
+
+.tb-active::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .editor-body {
@@ -1254,13 +1308,19 @@ kbd {
   font-weight: 700;
 }
 
+/* The frame, the spacing and the selected state now live with the image's own view
+   (`.image-view`), which is what carries the resize grips. What stays here is only
+   what an image needs when it is not in the editor at all — a history preview. */
 .prose img {
   display: block;
   max-width: 100%;
   height: auto;
-  margin: 1em 0;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.prose > img {
+  margin: 1em 0;
 }
 
 .prose img.ProseMirror-selectednode {
@@ -1550,4 +1610,185 @@ a:focus-visible {
 :root[data-theme="dark"] .prose img {
   padding: 6px;
   background: #f4f3f6;
+}
+
+/* ---------- toolbar tooltips ---------- */
+
+/*
+ * Drawn here rather than left to the browser's `title`.
+ *
+ * A native tooltip waits a second or more before it appears, shows nothing but one
+ * line of plain text, and on a toolbar of single letters that is the difference
+ * between a usable row of buttons and a row of mystery glyphs. This one appears
+ * after a short, deliberate pause and can carry the shortcut and a second line.
+ */
+.tb-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  z-index: 30;
+  transform: translateX(-50%);
+  max-width: 230px;
+  width: max-content;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--tip-bg);
+  color: var(--tip-text);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-style: normal;
+  text-decoration: none;
+  line-height: 1.45;
+  white-space: pre-line;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  /* The delay is on `visibility` so the tooltip does not flicker on its way past a
+     row of buttons, and the fade only starts once it has decided to show. */
+  visibility: hidden;
+  transition: opacity 110ms ease 320ms, visibility 0s linear 320ms;
+}
+
+.tb-btn[data-keys]:not([data-keys=""])::after {
+  content: attr(data-tip) "  " attr(data-keys);
+}
+
+.tb-btn[data-hint]:not([data-hint=""])::after {
+  content: attr(data-tip) "\A" attr(data-hint);
+}
+
+.tb-btn:hover::after,
+.tb-btn:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 320ms, 320ms;
+}
+
+/* ---------- images in a page ---------- */
+
+.image-view {
+  margin: 1em 0;
+}
+
+.image-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.image-view img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.image-selected img {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A grip on each side, so an image can be narrowed from whichever edge is nearer
+   the text it needs to sit beside. */
+.image-handle {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 42px;
+  max-height: 60%;
+  margin-top: -21px;
+  border: 1px solid var(--bg-raised);
+  border-radius: 5px;
+  background: var(--accent);
+  cursor: ew-resize;
+}
+
+.image-handle-left {
+  left: -6px;
+}
+
+.image-handle-right {
+  right: -6px;
+}
+
+.image-dragging {
+  user-select: none;
+}
+
+.image-remove,
+.image-reset {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.image-remove {
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.image-remove:hover {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+.image-reset {
+  bottom: 6px;
+  right: 6px;
+  padding: 4px 8px;
+}
+
+.image-reset:hover {
+  background: var(--bg-hover);
+}
+
+/* ---------- dropping a file in ---------- */
+
+.editor-dropping {
+  position: relative;
+}
+
+.editor-dropping::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  z-index: 1;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  pointer-events: none;
+}
+
+.drop-hint {
+  position: sticky;
+  bottom: 18px;
+  z-index: 2;
+  width: max-content;
+  margin: 0 auto;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
 }

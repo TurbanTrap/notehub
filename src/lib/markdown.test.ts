@@ -145,6 +145,32 @@ describe("images", () => {
     expect(twice).toBe(once);
     expect(twice).not.toContain("/vault/");
   });
+
+  it("a resized image keeps its width", () => {
+    // `![](…)` has nowhere to put a width, so a resized image is written as HTML.
+    // The point of the test is that the width survives, and that the path written
+    // is still the relative one rather than this machine's asset:// URL.
+    const html = '<img src="asset://localhost/x" data-rel="assets/shot.png" alt="a shot" width="320">';
+    const markdown = htmlToMarkdown(html);
+
+    expect(markdown).toBe('<img src="assets/shot.png" alt="a shot" width="320">');
+    expect(markdown).not.toContain("asset://");
+  });
+
+  it("a resized image survives being reopened and saved again", () => {
+    const first = '<img src="assets/shot.png" alt="a shot" width="320">';
+    const once = htmlToMarkdown(markdownToHtml(first, context));
+    const twice = htmlToMarkdown(markdownToHtml(once, context));
+
+    expect(once).toContain('width="320"');
+    expect(twice).toBe(once);
+    expect(twice).not.toContain("/vault/");
+  });
+
+  it("an image that was never resized stays in the plain form", () => {
+    // Most of a vault should look like Markdown, not like HTML.
+    expect(htmlToMarkdown('<img src="assets/a.png" alt="x">')).toBe("![x](assets/a.png)");
+  });
 });
 
 describe("parentDir", () => {
