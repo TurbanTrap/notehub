@@ -6,6 +6,7 @@
 import { marked, type Tokens } from "marked";
 import TurndownService from "turndown";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { canonicalColor, canonicalFont } from "./textStyles";
 
 marked.setOptions({
   gfm: true,
@@ -82,6 +83,70 @@ turndown.addRule("strikethrough", {
   filter: ["del", "s"],
   replacement: (content) => (content ? `~~${content}~~` : ""),
 });
+
+/**
+ * A colour, a font, a highlighter — none of which Markdown has a syntax for, so each
+ * is written as the inline HTML that Markdown permits and other renderers display.
+ *
+ * Only what the app itself offers is written back. The style on an element arrives
+ * from a file that anyone can edit by hand or that a sync brought in from another
+ * machine, so it is read property by property and each value has to pass its own
+ * check; the attribute is never passed through whole.
+ */
+turndown.addRule("textStyle", {
+  filter: (node) =>
+    node.nodeName === "SPAN" &&
+    !node.hasAttribute("data-wikilink") &&
+    knownStyles(node.getAttribute("style")).length > 0,
+  replacement: (content, node) => {
+    if (!content) return "";
+    const styles = knownStyles((node as HTMLElement).getAttribute("style"));
+    return styles.length ? `<span style="${styles.join("; ")}">${content}</span>` : content;
+  },
+});
+
+turndown.addRule("highlight", {
+  filter: "mark",
+  replacement: (content, node) => {
+    if (!content) return "";
+    const el = node as HTMLElement;
+    // `data-color` first: it is what this app wrote and what TipTap reads back, so it
+    // survives a round trip untouched. The background-color beside it is for every
+    // other Markdown viewer, which knows nothing about the attribute.
+    const color =
+      canonicalColor(el.getAttribute("data-color")) ??
+      canonicalColor(styleProperty(el.getAttribute("style"), "background-color"));
+    return color
+      ? `<mark data-color="${color}" style="background-color: ${color}">${content}</mark>`
+      : `<mark>${content}</mark>`;
+  },
+});
+
+/** The declarations of a style attribute this app recognises, in canonical form. */
+function knownStyles(style: string | null): string[] {
+  const out: string[] = [];
+  const color = canonicalColor(styleProperty(style, "color"));
+  if (color) out.push(`color: ${color}`);
+  const font = canonicalFont(styleProperty(style, "font-family"));
+  if (font) out.push(`font-family: ${font}`);
+  return out;
+}
+
+/**
+ * One declaration out of a style attribute, read from the text rather than through
+ * `element.style` — the DOM behind turndown differs between the app and the tests,
+ * and reading the text means both see exactly the same thing.
+ */
+function styleProperty(style: string | null, property: string): string | null {
+  if (!style) return null;
+  for (const declaration of style.split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon < 0) continue;
+    if (declaration.slice(0, colon).trim().toLowerCase() !== property) continue;
+    return declaration.slice(colon + 1).trim();
+  }
+  return null;
+}
 
 turndown.addRule("wikiLink", {
   filter: (node) => node.nodeName === "SPAN" && node.hasAttribute("data-wikilink"),

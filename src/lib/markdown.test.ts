@@ -142,6 +142,58 @@ describe("soft line breaks", () => {
   });
 });
 
+describe("colour, font and highlighter", () => {
+  // None of the three has a Markdown syntax, so each is written as inline HTML.
+  // What matters is that a page does not change shape every time it is opened, and
+  // that nothing but a known colour or font ever reaches a style attribute.
+
+  it("keeps a text colour, as hex, through a round trip", () => {
+    const markdown = htmlToMarkdown('<p><span style="color: rgb(214, 69, 61)">warm</span></p>');
+
+    expect(markdown).toBe('<span style="color: #d6453d">warm</span>');
+    expect(cycle(markdown)).toBe(markdown);
+  });
+
+  it("keeps a font, in the stack the app writes", () => {
+    const markdown = htmlToMarkdown('<p><span style="font-family: Georgia, serif">set</span></p>');
+
+    expect(markdown).toContain("font-family: Georgia, 'Times New Roman', serif");
+    expect(cycle(markdown)).toBe(markdown);
+  });
+
+  it("keeps a highlight, and writes a background a plain viewer can show", () => {
+    const markdown = htmlToMarkdown('<p><mark data-color="#fff3a3">lit</mark></p>');
+
+    expect(markdown).toBe('<mark data-color="#fff3a3" style="background-color: #fff3a3">lit</mark>');
+    expect(cycle(markdown)).toBe(markdown);
+  });
+
+  it("reads a highlight that only carries a background colour", () => {
+    // What another editor, or a hand edit, would leave behind.
+    expect(htmlToMarkdown('<mark style="background-color:#c3edbd">lit</mark>')).toContain(
+      'data-color="#c3edbd"',
+    );
+  });
+
+  it("drops anything in a style attribute it does not recognise", () => {
+    const sneaky =
+      '<p><span style="color: #d6453d; background: url(http://example.com/x); position: fixed">x</span></p>';
+
+    expect(htmlToMarkdown(sneaky)).toBe('<span style="color: #d6453d">x</span>');
+  });
+
+  it("keeps the text when the style says nothing it knows", () => {
+    expect(htmlToMarkdown('<p><span style="position: fixed">plain</span></p>')).toBe("plain");
+  });
+
+  it("leaves a wiki link alone", () => {
+    // Wiki links are spans too, and they have a rule of their own.
+    expect(htmlToMarkdown('<p><span data-wikilink="Ghidra Basics">Ghidra Basics</span></p>')).toBe(
+      "[[Ghidra Basics]]",
+    );
+  });
+});
+
 describe("wiki links", () => {
   it("survives a round trip", () => {
     const out = cycle("See [[Ghidra Basics]] for the setup.");

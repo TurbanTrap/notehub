@@ -758,6 +758,107 @@ button {
   background: var(--accent);
 }
 
+/* ---------- font, colour and highlighter ---------- */
+
+.tb-font {
+  height: 26px;
+  width: 128px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tb-font:hover {
+  color: var(--text);
+}
+
+.swatch-menu {
+  position: relative;
+  display: flex;
+}
+
+/* A letter over a bar in the colour that is in force — the only part of the button
+   that says what pressing it will do. */
+.tb-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 6px;
+}
+
+.swatch-letter {
+  font-size: 12.5px;
+  line-height: 1;
+}
+
+.swatch-bar {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text-dim);
+}
+
+.swatch-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow);
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 22px);
+  gap: 5px;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgb(0 0 0 / 0.2);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: transform 90ms ease;
+}
+
+.swatch:hover {
+  transform: scale(1.14);
+}
+
+.swatch-on {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.swatch-clear {
+  width: 100%;
+  margin-top: 7px;
+  padding: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.swatch-clear:hover {
+  color: var(--text);
+}
+
 .editor-body {
   display: flex;
   flex: 1;
@@ -1321,6 +1422,15 @@ kbd {
 
 .prose > img {
   margin: 1em 0;
+}
+
+/* The highlighters are pale, so the ink on top of one is held dark in both themes —
+   the dark theme's near-white text on a pale yellow could not be read at all. */
+.prose mark {
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: #fff3a3;
+  color: #16181d;
 }
 
 .prose img.ProseMirror-selectednode {

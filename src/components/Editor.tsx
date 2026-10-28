@@ -9,12 +9,16 @@ import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { Color, FontFamily, TextStyle } from "@tiptap/extension-text-style";
+import Highlight from "@tiptap/extension-highlight";
 import ImageView from "./ImageView";
+import SwatchMenu from "./SwatchMenu";
 import { detectOs, modLabel } from "../lib/platform";
+import { FONTS, HIGHLIGHTS, TEXT_COLORS, canonicalColor, fontLabel } from "../lib/textStyles";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { LANGUAGES, lowlight } from "../lib/highlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../lib/api";
 import type { Page } from "../lib/api";
 import { htmlToMarkdown, markdownToHtml, parentDir } from "../lib/markdown";
@@ -76,6 +80,35 @@ const VaultImage = Image.extend({
 
   addNodeView() {
     return ReactNodeViewRenderer(ImageView);
+  },
+});
+
+/**
+ * The highlighter.
+ *
+ * The stock mark writes `color: inherit` onto the element itself, and an inline style
+ * beats the stylesheet — which in the dark theme means near-white text on a pale
+ * yellow, unreadable. Dropping it lets the stylesheet pin the ink dark wherever there
+ * is a highlight, in both themes.
+ *
+ * The colour is checked going in as well as coming out. A page is a file anyone can
+ * edit, so what it holds is read rather than trusted, and a colour that is not a
+ * plain hex never reaches a style attribute.
+ */
+const Marker = Highlight.extend({
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (element) =>
+          canonicalColor(element.getAttribute("data-color")) ??
+          canonicalColor(element.style.backgroundColor),
+        renderHTML: (attributes) => {
+          const color = canonicalColor(attributes.color as string | null);
+          return color ? { "data-color": color, style: `background-color: ${color}` } : {};
+        },
+      },
+    };
   },
 });
 
@@ -180,6 +213,11 @@ export default function Editor({
         defaultLanguage: null,
       }),
       VaultImage.configure({ inline: false }),
+      // Colour and font both hang off TextStyle, which is the <span> they share.
+      TextStyle,
+      Color,
+      FontFamily,
+      Marker,
       WikiLink,
       LineBreaks,
     ],
@@ -548,6 +586,9 @@ function Toolbar({
   onPickImage: () => void;
 }) {
   const mod = modLabel(detectOs(navigator.userAgent));
+  // One colour menu open at a time: two palettes side by side is a muddle.
+  const [openMenu, setOpenMenu] = useState<"color" | "highlight" | null>(null);
+  const closeMenu = useCallback(() => setOpenMenu(null), []);
 
   const heading = (level: 1 | 2 | 3) => ({
     label: `H${level}`,
@@ -668,32 +709,93 @@ function Toolbar({
     ],
   ];
 
+  const currentFont = fontLabel(editor.getAttributes("textStyle").fontFamily as string | null);
+  const currentColor = canonicalColor(editor.getAttributes("textStyle").color as string | null);
+  const currentMark = canonicalColor(editor.getAttributes("highlight").color as string | null);
+
   return (
     <div className="toolbar" role="toolbar">
-      {groups.map((group, i) => (
-        <div className="toolbar-group" key={i}>
-          {group.map((item) => (
-            <button
-              key={item.title}
-              className={`tb-btn ${item.style ?? ""} ${item.active ? "tb-active" : ""}`}
-              // Not `title`: the native tooltip takes a second or more to appear and
-              // is easy to miss entirely. `data-tip` drives one drawn by the
-              // stylesheet, which shows at once and can carry the shortcut too.
-              data-tip={item.title}
-              data-keys={item.keys ?? ""}
-              data-hint={item.hint ?? ""}
-              aria-label={item.title}
-              aria-keyshortcuts={item.keys}
-              aria-pressed={item.active}
-              // The editor loses focus on mousedown otherwise, and the command then
-              // applies to no selection.
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={item.run}
-            >
-              {item.label}
-            </button>
+      <div className="toolbar-group">
+        <select
+          className="tb-font"
+          aria-label="Font"
+          title="Font for the selected text"
+          value={currentFont}
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const choice = FONTS.find((f) => f.label === e.target.value);
+            const chain = editor.chain().focus();
+            // `focus()` puts the caret back where it was before the menu took it.
+            if (choice) chain.setFontFamily(choice.stack).run();
+            else chain.unsetFontFamily().run();
+          }}
+        >
+          <option value="">Page font</option>
+          {FONTS.map((font) => (
+            <option key={font.label} value={font.label} style={{ fontFamily: font.stack }}>
+              {font.label}
+            </option>
           ))}
-        </div>
+        </select>
+      </div>
+
+      {groups.map((group, i) => (
+        <Fragment key={i}>
+          <div className="toolbar-group">
+            {group.map((item) => (
+              <button
+                key={item.title}
+                className={`tb-btn ${item.style ?? ""} ${item.active ? "tb-active" : ""}`}
+                // Not `title`: the native tooltip takes a second or more to appear and
+                // is easy to miss entirely. `data-tip` drives one drawn by the
+                // stylesheet, which shows at once and can carry the shortcut too.
+                data-tip={item.title}
+                data-keys={item.keys ?? ""}
+                data-hint={item.hint ?? ""}
+                aria-label={item.title}
+                aria-keyshortcuts={item.keys}
+                aria-pressed={item.active}
+                // The editor loses focus on mousedown otherwise, and the command then
+                // applies to no selection.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={item.run}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Right after bold and italic, where Word and Docs both keep them. */}
+          {i === 1 && (
+            <div className="toolbar-group">
+              <SwatchMenu
+                label="A"
+                title="Text colour"
+                swatches={TEXT_COLORS}
+                current={currentColor}
+                open={openMenu === "color"}
+                onToggle={() => setOpenMenu(openMenu === "color" ? null : "color")}
+                onClose={closeMenu}
+                onPick={(value) => editor.chain().focus().setColor(value).run()}
+                onClear={() => editor.chain().focus().unsetColor().run()}
+                clearLabel="No colour"
+              />
+              <SwatchMenu
+                label="▮"
+                title="Highlighter"
+                hint="Colours the page behind the text"
+                swatches={HIGHLIGHTS}
+                current={currentMark}
+                open={openMenu === "highlight"}
+                onToggle={() => setOpenMenu(openMenu === "highlight" ? null : "highlight")}
+                onClose={closeMenu}
+                onPick={(value) => editor.chain().focus().setHighlight({ color: value }).run()}
+                onClear={() => editor.chain().focus().unsetHighlight().run()}
+                clearLabel="No highlight"
+              />
+            </div>
+          )}
+        </Fragment>
       ))}
 
       {/* Only while the caret is in a code block: a language menu on a paragraph
