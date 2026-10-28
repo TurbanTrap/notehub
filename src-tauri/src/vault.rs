@@ -32,13 +32,34 @@ pub struct TreeNode {
     pub kind: String,
     pub title: String,
     pub path: String,
+    /// One of `COLORS`, for notebooks and sections that have been given one.
+    pub color: Option<String>,
     pub children: Vec<TreeNode>,
+}
+
+impl TreeNode {
+    fn page(title: String, path: String) -> Self {
+        TreeNode { kind: "page".into(), title, path, color: None, children: Vec::new() }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
 struct Meta {
     title: String,
+    /// Absent for anything that has not been given a colour, which is most things —
+    /// writing `null` into every file would be noise in a folder people read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
 }
+
+/// The colours a notebook or section may carry.
+///
+/// An allowlist, not a free string. The name crosses into the web layer and selects a
+/// CSS rule there, and these files sit in a folder anyone can hand-edit or sync, so a
+/// value that arrives from outside the app is dropped rather than passed along.
+pub const COLORS: &[&str] = &[
+    "purple", "blue", "teal", "green", "yellow", "orange", "red", "magenta", "graphite",
+];
 
 const NOTEBOOKS_DIR: &str = "notebooks";
 const INTERNAL_DIR: &str = ".notehub";
@@ -90,10 +111,12 @@ pub fn read_tree(root: &Path) -> Result<Vec<TreeNode>, String> {
         if !entry.is_dir() || is_hidden(&entry) {
             continue;
         }
+        let meta = read_meta(&entry, NOTEBOOK_META);
         out.push(TreeNode {
             kind: "notebook".into(),
-            title: read_meta_title(&entry, NOTEBOOK_META),
+            title: meta.title,
             path: path_string(&entry),
+            color: meta.color,
             children: scan_children(&entry)?,
         });
     }
@@ -118,22 +141,19 @@ fn scan_children(dir: &Path) -> Result<Vec<TreeNode>, String> {
             if entry.file_name().is_some_and(|n| n == ASSETS_DIR) {
                 continue;
             }
+            let meta = read_meta(&entry, SECTION_META);
             sections.push(TreeNode {
                 kind: "section".into(),
-                title: read_meta_title(&entry, SECTION_META),
+                title: meta.title,
                 path: path_string(&entry),
+                color: meta.color,
                 children: scan_children(&entry)?,
             });
         } else if entry.extension().is_some_and(|e| e == "md") {
             let parsed = page::read(&entry)?;
             pages.push((
                 parsed.created.clone(),
-                TreeNode {
-                    kind: "page".into(),
-                    title: parsed.title,
-                    path: path_string(&entry),
-                    children: Vec::new(),
-                },
+                TreeNode::page(parsed.title, path_string(&entry)),
             ));
         }
     }
@@ -158,6 +178,7 @@ pub fn create_notebook(root: &Path, title: &str) -> Result<TreeNode, String> {
         kind: "notebook".into(),
         title: title.to_string(),
         path: path_string(&dir),
+        color: None,
         children: Vec::new(),
     })
 }
@@ -177,6 +198,7 @@ pub fn create_section(parent: &Path, title: &str) -> Result<TreeNode, String> {
         kind: "section".into(),
         title: title.to_string(),
         path: path_string(&dir),
+        color: None,
         children: Vec::new(),
     })
 }
@@ -201,12 +223,7 @@ pub fn create_page(parent: &Path, title: &str) -> Result<TreeNode, String> {
     let new_page = Page::new(title);
     page::write(&file, &new_page)?;
 
-    Ok(TreeNode {
-        kind: "page".into(),
-        title: title.to_string(),
-        path: path_string(&file),
-        children: Vec::new(),
-    })
+    Ok(TreeNode::page(title.to_string(), path_string(&file)))
 }
 
 /// Rename an item, moving the file or folder so the vault stays browsable in Finder
@@ -241,6 +258,7 @@ pub fn rename(target: &Path, new_title: &str) -> Result<TreeNode, String> {
             kind: if meta_name == NOTEBOOK_META { "notebook".into() } else { "section".into() },
             title: trimmed.to_string(),
             path: path_string(&dest),
+            color: read_meta(&dest, meta_name).color,
             children: scan_children(&dest)?,
         });
     }
@@ -256,11 +274,47 @@ pub fn rename(target: &Path, new_title: &str) -> Result<TreeNode, String> {
         std::fs::rename(target, &dest).map_err(|e| format!("could not rename: {e}"))?;
     }
 
+    Ok(TreeNode::page(trimmed.to_string(), path_string(&dest)))
+}
+
+/// Give a notebook or section a colour, or clear it by passing `None`.
+///
+/// Pages have no colour of their own: in the sidebar they take the one from the
+/// notebook above them, the way a page in a ring binder takes the binder's divider.
+pub fn set_color(root: &Path, target: &Path, color: Option<&str>) -> Result<TreeNode, String> {
+    if let Some(name) = color {
+        if !COLORS.contains(&name) {
+            return Err(format!("{name} is not a colour NoteHub knows"));
+        }
+    }
+    if !target.is_dir() {
+        return Err("only a notebook or a section can carry a colour".into());
+    }
+
+    // Same guard as `delete`: a stale or crafted path must not get a metadata file
+    // written somewhere else on the machine.
+    let root_real = std::fs::canonicalize(root).map_err(|e| format!("bad vault path: {e}"))?;
+    let target_real = std::fs::canonicalize(target).map_err(|e| format!("bad path: {e}"))?;
+    if !target_real.starts_with(&root_real) || target_real == root_real {
+        return Err("that item is outside the vault".into());
+    }
+
+    let parent = target
+        .parent()
+        .ok_or_else(|| "that item has no parent folder".to_string())?;
+    let is_notebook = parent.file_name().is_some_and(|n| n == NOTEBOOKS_DIR);
+    let meta_name = if is_notebook { NOTEBOOK_META } else { SECTION_META };
+
+    let title = read_meta(target, meta_name).title;
+    let color = color.map(|c| c.to_string());
+    put_meta(target, meta_name, &Meta { title: title.clone(), color: color.clone() })?;
+
     Ok(TreeNode {
-        kind: "page".into(),
-        title: trimmed.to_string(),
-        path: path_string(&dest),
-        children: Vec::new(),
+        kind: if is_notebook { "notebook".into() } else { "section".into() },
+        title,
+        path: path_string(target),
+        color,
+        children: scan_children(target)?,
     })
 }
 
@@ -351,26 +405,38 @@ fn split_filename(filename: &str) -> (String, String) {
 }
 
 fn write_meta(dir: &Path, file: &str, title: &str) -> Result<(), String> {
-    let meta = Meta { title: title.to_string() };
-    let json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+    // Read first: renaming a notebook must not quietly throw away the colour it was
+    // given, and this is the only writer a rename goes through.
+    let colour = read_meta(dir, file).color;
+    put_meta(dir, file, &Meta { title: title.to_string(), color: colour })
+}
+
+fn put_meta(dir: &Path, file: &str, meta: &Meta) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
     std::fs::write(dir.join(file), json).map_err(|e| format!("could not write metadata: {e}"))
 }
 
 /// The display title for a folder, falling back to the folder name when the metadata
 /// file is missing — which is what happens for folders a person created by hand.
-fn read_meta_title(dir: &Path, file: &str) -> String {
+fn read_meta(dir: &Path, file: &str) -> Meta {
     let fallback = || {
         dir.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "Untitled".into())
     };
 
-    let Ok(raw) = std::fs::read_to_string(dir.join(file)) else {
-        return fallback();
-    };
-    match serde_json::from_str::<Meta>(&raw) {
-        Ok(meta) if !meta.title.trim().is_empty() => meta.title,
-        _ => fallback(),
+    let parsed = std::fs::read_to_string(dir.join(file))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Meta>(&raw).ok());
+
+    match parsed {
+        Some(meta) => Meta {
+            title: if meta.title.trim().is_empty() { fallback() } else { meta.title },
+            // A colour that is not one of ours was typed in by hand or came from a
+            // newer version; drop it rather than hand it to the web layer.
+            color: meta.color.filter(|c| COLORS.contains(&c.as_str())),
+        },
+        None => Meta { title: fallback(), color: None },
     }
 }
 
@@ -628,5 +694,80 @@ mod tests {
         assert_eq!(reread.id, body.id, "the page keeps its identity across a rename");
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_colour_survives_a_rename() {
+        let root = temp_root();
+        ensure(&root).unwrap();
+        let nb = create_notebook(&root, "Field Notes").unwrap();
+
+        set_color(&root, Path::new(&nb.path), Some("teal")).unwrap();
+        let renamed = rename(Path::new(&nb.path), "Field Notes 2026").unwrap();
+
+        assert_eq!(renamed.title, "Field Notes 2026");
+        assert_eq!(renamed.color.as_deref(), Some("teal"), "the rename wrote the colour away");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_colour_reaches_the_tree_and_can_be_cleared() {
+        let root = temp_root();
+        ensure(&root).unwrap();
+        let nb = create_notebook(&root, "NB").unwrap();
+        let sec = create_section(Path::new(&nb.path), "S").unwrap();
+
+        set_color(&root, Path::new(&nb.path), Some("orange")).unwrap();
+        set_color(&root, Path::new(&sec.path), Some("blue")).unwrap();
+
+        let tree = read_tree(&root).unwrap();
+        let found = tree.iter().find(|n| n.title == "NB").unwrap();
+        assert_eq!(found.color.as_deref(), Some("orange"));
+        assert_eq!(found.children[0].color.as_deref(), Some("blue"));
+
+        set_color(&root, Path::new(&nb.path), None).unwrap();
+        let tree = read_tree(&root).unwrap();
+        let found = tree.iter().find(|n| n.title == "NB").unwrap();
+        assert_eq!(found.color, None);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_colour_we_do_not_know_is_refused_and_a_hand_edited_one_is_ignored() {
+        let root = temp_root();
+        ensure(&root).unwrap();
+        let nb = create_notebook(&root, "NB").unwrap();
+
+        // Refused on the way in...
+        assert!(set_color(&root, Path::new(&nb.path), Some("chartreuse")).is_err());
+        assert!(set_color(&root, Path::new(&nb.path), Some("url(evil)")).is_err());
+
+        // ...and dropped on the way out, since the file is one anyone can edit.
+        std::fs::write(
+            Path::new(&nb.path).join(NOTEBOOK_META),
+            r#"{ "title": "NB", "color": "chartreuse" }"#,
+        )
+        .unwrap();
+        let tree = read_tree(&root).unwrap();
+        assert_eq!(tree.iter().find(|n| n.title == "NB").unwrap().color, None);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_colour_cannot_be_written_outside_the_vault() {
+        let root = temp_root();
+        ensure(&root).unwrap();
+        let elsewhere = temp_root();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+
+        assert!(set_color(&root, &elsewhere, Some("red")).is_err());
+        assert!(!elsewhere.join(NOTEBOOK_META).exists());
+        assert!(!elsewhere.join(SECTION_META).exists());
+
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&elsewhere).ok();
     }
 }

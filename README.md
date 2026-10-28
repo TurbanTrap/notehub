@@ -33,7 +33,24 @@ out of `target/` before using it, since a rebuild wipes that folder.
 The `.dmg` step at the end needs permission to control Finder (System Settings >
 Privacy & Security > Automation), and fails without it. That failure does not affect
 the `.app`, which is already built by then — a DMG is only needed to hand the app to
-someone else.
+someone else. `npm run tauri build -- --bundles app` skips the step entirely.
+
+### Windows installers
+
+A Windows build has to happen on Windows, so it runs in GitHub Actions rather than on
+this machine. Pushing a tag builds both platforms and opens a draft release:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+Running **Installers** by hand from the Actions tab builds the same things and attaches
+them to the run without publishing anything. Mac gets one universal `.dmg`; Windows
+gets an `.msi` and an NSIS `.exe`.
+
+Neither is code-signed. On macOS the first launch needs right-click > Open; on Windows,
+"More info" > "Run anyway" on the SmartScreen notice. Signing costs money per year on
+both platforms, and nothing about this app needs it to work.
 
 ## Tests
 
@@ -62,13 +79,24 @@ and outside the cache folder, which the system may clear. One is kept every coup
 minutes while you work, and whenever a version arrives from elsewhere. Restoring puts
 the text back and keeps what you were on, so it can be undone.
 
+## Looks
+
+**Light, Dark or Auto** at the bottom of the sidebar. Auto follows the system, and is
+what a fresh install uses; choosing one pins it for this machine only, since the
+setting lives in the app rather than in the vault.
+
+**Notebook colours** come from the ⋯ menu on a notebook or section. The colour runs
+down the spine of that notebook in the sidebar, tints its icons, and marks the open
+page, so a vault with several notebooks reads as a shelf rather than a list. The name
+of the colour is kept in `notebook.json`, so it travels with the notes.
+
 ## Vault layout
 
 ```
 <vault>/
   notebooks/
     Reverse-Engineering/
-      notebook.json
+      notebook.json          { "title": "Reverse Engineering", "color": "teal" }
       Static-Analysis/
         section.json
         ghidra-basics.md

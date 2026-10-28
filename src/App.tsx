@@ -7,7 +7,14 @@ import SearchResults from "./components/SearchResults";
 import QuickSwitcher from "./components/QuickSwitcher";
 import ConfirmDialog from "./components/ConfirmDialog";
 import HistoryDialog from "./components/HistoryDialog";
+import { THEMES, applyTheme, readTheme, type Theme } from "./lib/theme";
+import { detectOs, fileManager, modLabel } from "./lib/platform";
 import "./App.css";
+
+// Fixed for the life of the window, so there is nothing to keep in state.
+const OS = detectOs(navigator.userAgent);
+const mod = modLabel(OS);
+const manager = fileManager(OS);
 
 const AUTOSAVE_DELAY_MS = 700;
 const SEARCH_DELAY_MS = 150;
@@ -50,6 +57,12 @@ export default function App() {
   const [pendingDelete, setPendingDelete] = useState<TreeNode | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  // Read straight out of storage. main.tsx has already put it on the document
+  // before the first paint; this is only what the buttons read and write.
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  /** Colour names the vault will accept, asked for once at startup. */
+  const [palette, setPalette] = useState<string[]>([]);
 
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -144,6 +157,19 @@ export default function App() {
     },
     [flush, vaultPath],
   );
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  // The colours the vault will store. Asked for rather than listed here, so the
+  // swatches can never offer one `set_color` would refuse.
+  useEffect(() => {
+    api
+      .colors()
+      .then(setPalette)
+      .catch(() => setPalette([]));
+  }, []);
 
   // Don't lose the last few hundred milliseconds of typing when the window is closed
   // or hidden.
@@ -537,6 +563,16 @@ export default function App() {
     }
   };
 
+  const recolor = async (node: TreeNode, color: string | null) => {
+    if (!vaultPath) return;
+    try {
+      await api.setColor(vaultPath, node.path, color);
+      await refreshTree();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const changeTags = async (tags: string[]) => {
     if (!vaultPath || !activePath) return;
     try {
@@ -684,18 +720,20 @@ export default function App() {
             tree={tree}
             activePath={activePath}
             expanded={expanded}
+            palette={palette}
             onToggle={toggle}
             onSelectPage={(p) => void selectPage(p)}
             onAddSection={(p) => void addSection(p)}
             onAddPage={(p) => void addPage(p)}
             onRename={(node, title) => void rename(node, title)}
+            onRecolor={(node, color) => void recolor(node, color)}
             onDelete={setPendingDelete}
           />
         )}
 
         <div className="sidebar-foot">
           <button className="link-btn" onClick={() => setSwitcherOpen(true)}>
-            Go to page… <kbd>⌘K</kbd>
+            Go to page… <kbd>{mod}K</kbd>
           </button>
           <button
             className="link-btn"
@@ -710,6 +748,21 @@ export default function App() {
           <button className="link-btn" onClick={chooseVault}>
             Switch folder
           </button>
+
+          <div className="theme-row">
+            <div className="theme-seg" role="group" aria-label="Theme">
+              {THEMES.map((option) => (
+                <button
+                  key={option}
+                  className={theme === option ? "theme-on" : ""}
+                  aria-pressed={theme === option}
+                  onClick={() => setTheme(option)}
+                >
+                  {option === "system" ? "Auto" : option === "light" ? "Light" : "Dark"}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -753,7 +806,10 @@ export default function App() {
             onBodyChange={(body) => queueSave(activePath, body)}
             onOpenHistory={() => setHistoryOpen(true)}
             onTitleCommit={(title) =>
-              void rename({ kind: "page", title: activePage.title, path: activePath, children: [] }, title)
+              void rename(
+                { kind: "page", title: activePage.title, path: activePath, color: null, children: [] },
+                title,
+              )
             }
             onOpenWikiLink={openWikiLink}
             resolveWikiLink={resolveWikiLink}
@@ -795,8 +851,8 @@ export default function App() {
           title={`Delete “${pendingDelete.title}”?`}
           message={
             pendingDelete.kind === "page"
-              ? "It moves to the vault's trash folder, so you can still get it back from Finder."
-              : "This and everything inside it moves to the vault's trash folder, so you can still get it back from Finder."
+              ? `It moves to the vault's trash folder, so you can still get it back from ${manager}.`
+              : `This and everything inside it moves to the vault's trash folder, so you can still get it back from ${manager}.`
           }
           confirmLabel="Delete"
           onConfirm={() => void confirmDelete()}

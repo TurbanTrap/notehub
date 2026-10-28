@@ -1,15 +1,19 @@
 import { useState } from "react";
 import type { TreeNode } from "../lib/api";
+import Icon from "./Icon";
 
 interface Props {
   tree: TreeNode[];
   activePath: string | null;
   expanded: Set<string>;
+  /** Colour names the vault will accept, from the backend. */
+  palette: string[];
   onToggle: (path: string) => void;
   onSelectPage: (path: string) => void;
   onAddSection: (parentPath: string) => void;
   onAddPage: (parentPath: string) => void;
   onRename: (node: TreeNode, title: string) => void;
+  onRecolor: (node: TreeNode, color: string | null) => void;
   onDelete: (node: TreeNode) => void;
 }
 
@@ -28,11 +32,13 @@ function TreeItem({
   depth,
   activePath,
   expanded,
+  palette,
   onToggle,
   onSelectPage,
   onAddSection,
   onAddPage,
   onRename,
+  onRecolor,
   onDelete,
   ...rest
 }: Props & { node: TreeNode; depth: number }) {
@@ -50,7 +56,12 @@ function TreeItem({
   };
 
   return (
-    <div className="tree-branch">
+    <div
+      className={`tree-branch ${node.kind === "notebook" ? "branch-notebook" : ""}`}
+      // The colour name only ever lands in an attribute the stylesheet matches
+      // on, never in a style string — see the note above the rules in App.css.
+      data-color={node.color ?? undefined}
+    >
       <div
         className={`row row-${node.kind} ${isActive ? "row-active" : ""}`}
         style={{ paddingLeft: 8 + depth * 14 }}
@@ -68,8 +79,8 @@ function TreeItem({
           </button>
         )}
 
-        <span className="row-icon" aria-hidden="true">
-          {node.kind === "notebook" ? "📕" : node.kind === "section" ? "📂" : "📄"}
+        <span className="row-icon">
+          <Icon kind={node.kind} />
         </span>
 
         {draft !== null ? (
@@ -149,6 +160,36 @@ function TreeItem({
               >
                 Delete
               </button>
+
+              {!isPage && palette.length > 0 && (
+                <>
+                  <div className="menu-sep">Colour</div>
+                  <div className="swatches">
+                    <button
+                      className={`swatch swatch-none ${node.color ? "" : "swatch-on"}`}
+                      title="No colour"
+                      aria-label="No colour"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onRecolor(node, null);
+                      }}
+                    />
+                    {palette.map((name) => (
+                      <button
+                        key={name}
+                        className={`swatch ${node.color === name ? "swatch-on" : ""}`}
+                        data-color={name}
+                        title={name}
+                        aria-label={name}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onRecolor(node, name);
+                        }}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </>
         )}
@@ -168,11 +209,13 @@ function TreeItem({
               depth={depth + 1}
               activePath={activePath}
               expanded={expanded}
+              palette={palette}
               onToggle={onToggle}
               onSelectPage={onSelectPage}
               onAddSection={onAddSection}
               onAddPage={onAddPage}
               onRename={onRename}
+              onRecolor={onRecolor}
               onDelete={onDelete}
               {...rest}
             />

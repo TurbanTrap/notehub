@@ -8,6 +8,8 @@ export interface TreeNode {
   kind: NodeKind;
   title: string;
   path: string;
+  /** One of the names `colors()` returns, for notebooks and sections. */
+  color: string | null;
   children: TreeNode[];
 }
 
@@ -74,6 +76,14 @@ export const savePage = (
 
 export const renameItem = (path: string, newTitle: string) =>
   invoke<TreeNode>("rename_item", { path, newTitle });
+
+/** Colour a notebook or section; `null` clears it. */
+export const setColor = (vaultPath: string, path: string, color: string | null) =>
+  invoke<TreeNode>("set_color", { vaultPath, path, color });
+
+/** The colour names the backend accepts. Asked for rather than hard-coded here,
+ *  so the picker can never offer one a vault would refuse to store. */
+export const colors = () => invoke<string[]>("colors");
 
 export const deleteItem = (vaultPath: string, path: string) =>
   invoke<void>("delete_item", { vaultPath, path });

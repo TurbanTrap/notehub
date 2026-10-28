@@ -618,6 +618,22 @@ fn rename_item(path: String, new_title: String) -> Result<TreeNode, String> {
     vault::rename(Path::new(&path), &new_title)
 }
 
+/// Colour a notebook or section. `color` is `None` to clear it.
+#[tauri::command(async)]
+fn set_color(
+    vault_path: String,
+    path: String,
+    color: Option<String>,
+) -> Result<TreeNode, String> {
+    vault::set_color(Path::new(&vault_path), Path::new(&path), color.as_deref())
+}
+
+/// The colour names the app offers, so the picker and the vault cannot drift apart.
+#[tauri::command(async)]
+fn colors() -> Vec<String> {
+    vault::COLORS.iter().map(|c| c.to_string()).collect()
+}
+
 #[tauri::command(async)]
 fn delete_item(vault_path: String, path: String) -> Result<(), String> {
     vault::delete(Path::new(&vault_path), Path::new(&path))
@@ -685,6 +701,8 @@ pub fn run() {
             read_page,
             save_page,
             rename_item,
+            set_color,
+            colors,
             delete_item,
             reveal_vault,
             save_asset,

@@ -1,0 +1,45 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Both shipping platforms, because the things most likely to break on one and
+    # not the other are exactly what this project does: file names, path rules and
+    # the folder a note is written to.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Types
+        run: npx tsc --noEmit
+
+      - name: Frontend tests
+        run: npx vitest run
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test

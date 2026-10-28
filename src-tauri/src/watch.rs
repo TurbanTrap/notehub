@@ -110,7 +110,12 @@ pub fn start(app: &AppHandle, root: &Path) -> Result<(), String> {
                 // Anything appearing, vanishing or being renamed can change the shape
                 // of the sidebar, including a whole section folder arriving at once.
                 // Rebuilding the tree is cheap, so this errs towards doing it.
-                if structural {
+                //
+                // A metadata file counts even when it is only edited in place: the
+                // title and colour the sidebar draws live inside it, so a notebook
+                // renamed or recoloured on the other machine arrives as nothing but a
+                // write to one of these.
+                if structural || is_meta(path) {
                     change.structural = true;
                 }
 
@@ -159,6 +164,12 @@ fn is_page(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
 }
 
+/// A notebook's or section's own record: its title and colour.
+fn is_meta(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| n == "notebook.json" || n == "section.json")
+}
+
 /// Whether a path is none of our business.
 ///
 /// Everything with a leading dot below the vault root is skipped: the app's own
@@ -190,6 +201,17 @@ mod tests {
     fn a_page_is_watched() {
         assert!(!ignored(Path::new(ROOT), &under("notebooks/RE/Packers/upx.md")));
         assert!(is_page(&under("notebooks/RE/Packers/upx.md")));
+    }
+
+    #[test]
+    fn a_notebooks_own_record_counts_as_a_change_to_the_sidebar() {
+        // Renaming or recolouring a notebook on another machine arrives as a write
+        // to one of these and nothing else — no file appears, and no page changes —
+        // so without this the sidebar would keep showing the old name until restart.
+        assert!(is_meta(&under("notebooks/RE/notebook.json")));
+        assert!(is_meta(&under("notebooks/RE/Packers/section.json")));
+        assert!(!is_meta(&under("notebooks/RE/Packers/upx.md")));
+        assert!(!is_meta(&under("notebooks/RE/assets/notes.json")));
     }
 
     #[test]
