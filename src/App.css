@@ -1444,6 +1444,34 @@ kbd {
   outline-offset: 2px;
 }
 
+/*
+ * The editor slips a tiny empty <img> into the text next to a line break that ends a
+ * line, because a break with nothing after it does not render on its own. It is
+ * scaffolding, not a picture.
+ *
+ * But it is an <img>, so it was picking up everything above: a border, rounded
+ * corners, and in the dark theme a 6px light plate. The result was a small pale
+ * circle sitting alone on every empty line — which is exactly what a bullet looks
+ * like, and why pressing Shift+Enter with nothing after the caret appeared to start
+ * a list. Nothing was ever wrong with the document: it held a line break the whole
+ * time, and the file on disk was right.
+ *
+ * The editor ships a stylesheet that neutralises this, which we do not import —
+ * it also sets type and whitespace rules that would fight the ones in here. So the
+ * one rule that matters is restated, with the same `!important` it uses, because the
+ * dark theme's plate is otherwise the more specific rule.
+ */
+.prose img.ProseMirror-separator {
+  display: inline !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: none !important;
+}
+
 /* ---------- wiki links ---------- */
 
 .wikilink {
