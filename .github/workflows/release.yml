@@ -19,11 +19,18 @@ jobs:
         include:
           # One Mac build that runs on both Apple silicon and Intel, rather than
           # two downloads nobody can tell apart.
+          #
+          # `universal-apple-darwin` is Tauri's name for "build both and lipo
+          # them together", not a target rustup has ever heard of — asking it to
+          # install one fails outright. The two real targets go to rustup; the
+          # pseudo-target goes to Tauri.
           - os: macos-latest
-            target: universal-apple-darwin
+            name: universal-apple-darwin
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target universal-apple-darwin
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            name: x86_64-pc-windows-msvc
+            rust-targets: x86_64-pc-windows-msvc
             args: ""
 
     runs-on: ${{ matrix.os }}
@@ -41,7 +48,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust-targets }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -70,7 +77,7 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
-          name: notehub-${{ matrix.target }}
+          name: notehub-${{ matrix.name }}
           path: |
             src-tauri/target/**/release/bundle/dmg/*.dmg
             src-tauri/target/**/release/bundle/msi/*.msi
