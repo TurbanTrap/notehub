@@ -1252,6 +1252,27 @@ kbd {
   outline: none;
 }
 
+/*
+ * A run of spaces inside a paragraph collapses to one on screen, and that is left
+ * alone deliberately — the obvious one-line fix makes things worse.
+ *
+ * `white-space: pre-wrap` here would show every space as it is typed. But saving
+ * collapses a run of spaces back to one before it ever reaches the file, and
+ * loading a page collapses it again, so the spaces would appear while typing and
+ * then quietly disappear on the next reload. Not seeing them in the first place is
+ * the more honest of the two.
+ *
+ * Making them real would mean keeping them through the save, through the load, and
+ * normalising the line wrapping in the Markdown source first — a newline inside a
+ * paragraph becomes a hard break once whitespace is preserved, which would put a
+ * line break at the end of every wrapped line of every imported document. And a run
+ * of spaces is not meaningful in Markdown anyway: every other renderer collapses it,
+ * so the file would be carrying something only this app honoured.
+ *
+ * Inside a code block none of this applies — the fence keeps its spacing exactly,
+ * which is the place it actually matters.
+ */
+
 .prose > *:first-child {
   margin-top: 0;
 }
