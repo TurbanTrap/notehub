@@ -60,6 +60,24 @@ turndown.addRule("underline", {
   replacement: (content) => (content ? `<u>${content}</u>` : ""),
 });
 
+/**
+ * A soft line break — Shift+Enter — written as `<br>`.
+ *
+ * Markdown's own line break is two spaces at the end of a line, which is whitespace,
+ * and that is the whole problem: at the end of a paragraph it is trimmed away, so the
+ * break was simply lost; alone on a line it reads back as a blank line, so the
+ * paragraph split in two; and inside a list item it broke the rest of the item out of
+ * the list. That is why a break only ever held between two pieces of text.
+ *
+ * `<br>` is inline HTML, which Markdown allows and every renderer passes through. It
+ * is not whitespace, so nothing trims it, and it means the same thing everywhere —
+ * in a paragraph, in a list item, on a line by itself.
+ */
+turndown.addRule("hardBreak", {
+  filter: "br",
+  replacement: () => "<br>\n",
+});
+
 turndown.addRule("strikethrough", {
   filter: ["del", "s"],
   replacement: (content) => (content ? `~~${content}~~` : ""),

@@ -87,6 +87,61 @@ describe("markdown round trip", () => {
   });
 });
 
+describe("soft line breaks", () => {
+  // Shift+Enter. Markdown's own line break is two spaces at the end of a line, and
+  // because that is whitespace it was being trimmed off the end of a paragraph,
+  // read back as a blank line when it stood alone, and breaking the rest of a list
+  // item out of its list. Each of these pins down one of those.
+
+  it("survives at the end of a paragraph, with nothing after it", () => {
+    const once = cycle(htmlToMarkdown("<p>Hey<br></p>"));
+
+    expect(once).toContain("<br>");
+    expect(markdownToHtml(once)).toContain("<br>");
+  });
+
+  it("stays one paragraph when the break is on a line of its own", () => {
+    // Two breaks in a row: a blank line the person put there deliberately. It used
+    // to come back as two separate paragraphs.
+    const markdown = htmlToMarkdown("<p>Hey<br><br>world</p>");
+    const html = markdownToHtml(markdown);
+
+    expect(html).toContain("<br>");
+    expect(html.match(/<p>/g)).toHaveLength(1);
+    expect(cycle(markdown)).toBe(markdown);
+  });
+
+  it("keeps the rest of a list item inside its list", () => {
+    const markdown = htmlToMarkdown("<ul><li><p>Hey<br>world</p></li></ul>");
+    const html = markdownToHtml(markdown);
+
+    expect(html).toContain("<br>");
+    expect(html).toContain("world");
+    // The giveaway for the old bug: "world" left the list and became a paragraph.
+    expect(html).not.toMatch(/<\/ul>[\s\S]*world/);
+    expect(cycle(markdown)).toBe(markdown);
+  });
+
+  it("holds a blank line inside a list item", () => {
+    const markdown = htmlToMarkdown("<ul><li><p>Hey<br><br></p></li></ul>");
+
+    expect(markdown).toContain("<br>");
+    expect(cycle(markdown)).toBe(markdown);
+  });
+
+  it("survives inside a quote", () => {
+    const markdown = htmlToMarkdown("<blockquote><p>Hey<br>world</p></blockquote>");
+
+    expect(markdownToHtml(markdown)).toContain("<br>");
+    expect(cycle(markdown)).toBe(markdown);
+  });
+
+  it("does not add a break where the person did not put one", () => {
+    // A newline inside a paragraph in the file is just wrapping, not a break.
+    expect(markdownToHtml("one\ntwo")).not.toContain("<br>");
+  });
+});
+
 describe("wiki links", () => {
   it("survives a round trip", () => {
     const out = cycle("See [[Ghidra Basics]] for the setup.");

@@ -82,12 +82,18 @@ const VaultImage = Image.extend({
 /**
  * Enter ends the paragraph; Shift+Enter breaks the line inside it.
  *
- * Both are what the editor does anyway, and both are stated here on purpose. The
- * bindings go in at a priority above the lists and the code block, so that whatever
- * else a future extension brings with it, these two keys keep behaving the way they
- * do in Word and Docs. `setHardBreak` reports false when it cannot apply — inside a
- * code block, where a plain newline is what is wanted — and returning false there
- * lets the usual handling take over.
+ * The bindings go in at a priority above the lists and the code block, so that
+ * whatever else a future extension brings with it, these two keys keep behaving the
+ * way they do in Word and Docs — in an empty paragraph exactly as after a word.
+ * `setHardBreak` reports false when it cannot apply, inside a code block where a
+ * plain newline is what is wanted, and returning false there lets the usual handling
+ * take over.
+ *
+ * The heading is the one place it does something else. A Markdown heading is a single
+ * line by definition — `## Title` ends at the newline — so a break inside one cannot
+ * be written to the file, and the page would come back split in two after the next
+ * reload. Ending the heading is what the file would do anyway; doing it here means it
+ * happens where it can be seen, rather than quietly overnight.
  */
 const LineBreaks = Extension.create({
   name: "lineBreaks",
@@ -95,7 +101,10 @@ const LineBreaks = Extension.create({
 
   addKeyboardShortcuts() {
     return {
-      "Shift-Enter": () => this.editor.commands.setHardBreak(),
+      "Shift-Enter": () =>
+        this.editor.isActive("heading")
+          ? this.editor.chain().splitBlock().setParagraph().run()
+          : this.editor.commands.setHardBreak(),
     };
   },
 });
