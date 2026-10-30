@@ -108,6 +108,9 @@ export default function ImageView({ node, updateAttributes, deleteNode, selected
     <NodeViewWrapper
       className={`image-view ${selected ? "image-selected" : ""} ${dragging ? "image-dragging" : ""}`}
       data-align={align ?? "none"}
+      // The picture itself is a drag handle as well as the grip, so it can be picked
+      // up the way it looks like it should. The resize handles and the toolbar buttons
+      // all cancel pointerdown, which stops a drag starting from them by accident.
       data-drag-handle
     >
       <div className="image-frame">
@@ -128,6 +131,23 @@ export default function ImageView({ node, updateAttributes, deleteNode, selected
         {selected && (
           <>
             <div className="image-bar">
+              {/* The one place a drag moves the image rather than resizing it.
+                  `data-drag-handle` is what tells ProseMirror this grip drags the
+                  whole node, so the picture can be carried to another spot in the
+                  page and dropped there. It is a span rather than a button because
+                  a button swallows the drag on Safari. */}
+              <span
+                className="image-tool image-grip"
+                role="button"
+                tabIndex={-1}
+                title="Drag to move this image"
+                aria-label="Drag to move this image"
+                data-drag-handle
+                draggable
+              >
+                <GripIcon />
+              </span>
+
               {WRAPS.map((wrap) => (
                 <button
                   key={wrap.label}
@@ -208,6 +228,18 @@ function clamp(value: number, max: number): number {
 }
 
 /** A block for the image and rules for the text, showing where each would sit. */
+/** The four-way arrow every program uses to mean "pick this up and move it". */
+function GripIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M8 1.2 10.1 3.6H8.8v3.6h3.6V5.9L14.8 8l-2.4 2.1V8.8H8.8v3.6h1.3L8 14.8l-2.1-2.4h1.3V8.8H3.6v1.3L1.2 8l2.4-2.1v1.3h3.6V3.6H5.9Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function WrapIcon({ kind }: { kind: "none" | "left" | "right" }) {
   if (kind === "none") {
     return (

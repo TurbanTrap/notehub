@@ -659,6 +659,8 @@ export function Toolbar({
   const mod = modLabel(detectOs(navigator.userAgent));
   // One colour menu open at a time: two palettes side by side is a muddle.
   const [openMenu, setOpenMenu] = useState<"color" | "highlight" | null>(null);
+  /** What was highlighted when the font menu opened — see its onMouseDown. */
+  const chosen = useRef<{ from: number; to: number } | null>(null);
   const closeMenu = useCallback(() => setOpenMenu(null), []);
 
   const heading = (level: 1 | 2 | 3) => ({
@@ -792,16 +794,44 @@ export function Toolbar({
           aria-label="Font"
           title="Font for the selected text"
           value={currentFont}
-          onMouseDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            // Opening a native menu takes focus out of the editor and collapses the
+            // selection on the way, so the highlighted words have to be remembered
+            // here, while they still exist. Without this, choosing a font for three
+            // words reaches the editor as a bare caret.
+            const { from, to } = editor.state.selection;
+            chosen.current = { from, to };
+          }}
           onChange={(e) => {
             const choice = FONTS.find((f) => f.label === e.target.value);
-            const chain = editor.chain().focus();
+            const saved = chosen.current ?? editor.state.selection;
+            const { from, to } = saved;
             // `focus()` puts the caret back where it was before the menu took it.
-            if (choice) chain.setFontFamily(choice.stack).run();
-            else chain.unsetFontFamily().run();
+            const chain = editor.chain().focus();
+            const apply = () =>
+              choice ? chain.setFontFamily(choice.stack) : chain.unsetFontFamily();
+
+            // Something was highlighted: exactly those letters change, whether that
+            // is one character, a word, or several paragraphs.
+            if (from !== to) {
+              chain.setTextSelection({ from, to });
+              apply();
+              chain.run();
+              return;
+            }
+
+            // Nothing was highlighted. A font would otherwise only reach text typed
+            // next, so choosing one for a line already written would appear to do
+            // nothing. Take the whole line instead, then put the caret back so typing
+            // carries on from the same place.
+            const $caret = editor.state.doc.resolve(from);
+            chain.setTextSelection({ from: $caret.start(), to: $caret.end() });
+            apply();
+            chain.setTextSelection(from).run();
           }}
         >
-          <option value="">Page font</option>
+          <option value="">Default font</option>
           {FONTS.map((font) => (
             <option key={font.label} value={font.label} style={{ fontFamily: font.stack }}>
               {font.label}

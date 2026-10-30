@@ -2038,6 +2038,30 @@ a:focus-visible {
   color: var(--accent);
 }
 
+/* The grip that moves the image. An open hand, closing while it is carried — the
+   same signal every other program gives for "this one is picked up, not resized". */
+.image-grip {
+  cursor: grab;
+  border-right: 1px solid var(--border);
+  border-radius: 5px 0 0 5px;
+}
+
+.image-grip:active,
+.image-selected .image-frame img:active {
+  cursor: grabbing;
+}
+
+.image-grip:active {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+/* Once it is selected the picture can be carried too, so it says so. The resize
+   handles sit on top and keep their own cursors. */
+.image-selected .image-frame img {
+  cursor: grab;
+}
+
 .image-tool-text {
   padding: 0 7px;
 }
