@@ -7,6 +7,8 @@ import SearchResults from "./components/SearchResults";
 import QuickSwitcher from "./components/QuickSwitcher";
 import ConfirmDialog from "./components/ConfirmDialog";
 import HistoryDialog from "./components/HistoryDialog";
+import PaneDivider from "./components/PaneDivider";
+import { SIDEBAR, readSidebarWidth, writeSidebarWidth } from "./lib/panes";
 import { THEMES, applyTheme, readTheme, type Theme } from "./lib/theme";
 import { detectOs, fileManager, modLabel } from "./lib/platform";
 import "./App.css";
@@ -63,6 +65,10 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(readTheme);
   /** Colour names the vault will accept, asked for once at startup. */
   const [palette, setPalette] = useState<string[]>([]);
+
+  // Written back only when a drag ends, not on every pointer move: the pane follows
+  // the cursor from state, and storage only needs the number it came to rest on.
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
 
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -680,7 +686,7 @@ export default function App() {
   const searchMode = query.trim().length >= MIN_QUERY;
 
   return (
-    <div className="app">
+    <div className="app" style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}>
       <aside className="sidebar">
         <div className="sidebar-head">
           <span className="brand">NoteHub</span>
@@ -764,6 +770,15 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        <PaneDivider
+          side="left"
+          width={sidebarWidth}
+          range={SIDEBAR}
+          label="Notebooks panel width"
+          onWidth={setSidebarWidth}
+          onSettled={writeSidebarWidth}
+        />
       </aside>
 
       <main className="main">

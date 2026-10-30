@@ -25,6 +25,14 @@ import { htmlToMarkdown, markdownToHtml, parentDir } from "../lib/markdown";
 import { WikiLink } from "./WikiLink";
 import Outline, { type OutlineItem } from "./Outline";
 import LinkDialog from "./LinkDialog";
+import PaneDivider from "./PaneDivider";
+import {
+  OUTLINE,
+  readOutlineShown,
+  readOutlineWidth,
+  writeOutlineShown,
+  writeOutlineWidth,
+} from "../lib/panes";
 import TagBar from "./TagBar";
 import Backlinks from "./Backlinks";
 import type { LinkRef } from "../lib/api";
@@ -221,6 +229,10 @@ export default function Editor({
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [activeHeading, setActiveHeading] = useState<number | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
+  // Off until asked for: the outline and backlinks are worth having, but they take
+  // space from the page every time it is opened, which is not what most writing wants.
+  const [outlineShown, setOutlineShown] = useState(readOutlineShown);
+  const [outlineWidth, setOutlineWidth] = useState(readOutlineWidth);
   const [docVersion, setDocVersion] = useState(0);
   /** True while a file is being dragged over the page, to show where it will land. */
   const [dropping, setDropping] = useState(false);
@@ -495,6 +507,18 @@ export default function Editor({
         />
         <span className={`status status-${status}`}>{statusLabel(status)}</span>
         <button
+          className={`link-btn${outlineShown ? " link-btn-on" : ""}`}
+          aria-pressed={outlineShown}
+          title="Headings on this page, and the pages that link to it"
+          onClick={() => {
+            const next = !outlineShown;
+            setOutlineShown(next);
+            writeOutlineShown(next);
+          }}
+        >
+          Outline
+        </button>
+        <button
           className="link-btn"
           title="Earlier versions of this page, kept on this machine"
           onClick={onOpenHistory}
@@ -540,10 +564,22 @@ export default function Editor({
           {dropping && <div className="drop-hint">Drop to add the image here</div>}
         </div>
 
-        <div className="side-panel">
-          <Outline items={outline} activePos={activeHeading} onJump={jumpTo} />
-          <Backlinks links={backlinks} onOpen={onOpenPage} />
-        </div>
+        {outlineShown && (
+          <>
+            <PaneDivider
+              side="right"
+              width={outlineWidth}
+              range={OUTLINE}
+              label="Outline panel width"
+              onWidth={setOutlineWidth}
+              onSettled={writeOutlineWidth}
+            />
+            <div className="side-panel" style={{ width: outlineWidth }}>
+              <Outline items={outline} activePos={activeHeading} onJump={jumpTo} />
+              <Backlinks links={backlinks} onOpen={onOpenPage} />
+            </div>
+          </>
+        )}
       </div>
 
       {linkOpen && editor && (

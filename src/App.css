@@ -306,8 +306,15 @@ button {
   opacity: 0.6;
 }
 
+/** A link-btn that toggles something that is currently on. */
+.link-btn-on {
+  color: var(--accent);
+}
+
 /* ---------- layout ---------- */
 
+/* The first column is overwritten inline with the width the user dragged to; the
+   value here is only what the page looks like before React renders. */
 .app {
   display: grid;
   grid-template-columns: 262px 1fr;
@@ -315,11 +322,52 @@ button {
 }
 
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--border);
   background: var(--bg-sidebar);
+}
+
+/* ---------- pane dividers ---------- */
+
+/* Nine pixels of grab area over a one-pixel border. It stays invisible until it is
+   pointed at, so the window does not grow two more lines down it. */
+.pane-divider {
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 120ms ease;
+  touch-action: none;
+}
+
+.pane-divider:hover,
+.pane-dragging {
+  background: var(--accent-soft);
+}
+
+.pane-divider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The sidebar is a grid column, so its divider rides on the sidebar's own edge
+   rather than taking a column of its own. */
+.pane-divider-left {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 9px;
+}
+
+/* The outline panel sits in a flex row, so its divider is a flex item — overlapping
+   its neighbours by four pixels each side so it still only costs the border's one. */
+.pane-divider-right {
+  flex: none;
+  width: 9px;
+  margin: 0 -4px;
 }
 
 .sidebar-head {
@@ -875,11 +923,11 @@ button {
 
 /* ---------- outline ---------- */
 
+/* The width comes in inline, from the divider beside it. */
 .side-panel {
   flex: none;
   display: flex;
   flex-direction: column;
-  width: 214px;
   overflow-y: auto;
   border-left: 1px solid var(--border);
 }
