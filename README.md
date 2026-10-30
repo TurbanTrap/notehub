@@ -84,6 +84,25 @@ meant to open it.
 Only needed the first time. If you would rather not trust a stranger's binary — a
 sound instinct — the source is right here and builds in two commands.
 
+### Checking what you downloaded
+
+Because the installers are unsigned, a file tampered with on its way to you looks
+exactly like one that was not. Every release carries a `SHA256SUMS-*.txt` written by the
+build itself, so you can tell the two apart:
+
+```bash
+# macOS
+shasum -a 256 ~/Downloads/NoteHub_0.2.1_universal.dmg
+```
+
+```powershell
+# Windows
+Get-FileHash -Algorithm SHA256 $HOME\Downloads\NoteHub_0.2.1_x64-setup.exe
+```
+
+Compare the result against the line for that filename in the checksum file. If it does
+not match, do not run it.
+
 ## Building it yourself
 
 ```bash
@@ -183,3 +202,18 @@ Each page is Markdown with a small YAML frontmatter block holding its id, title,
 timestamps and tags. Filenames are ASCII slugs so the same vault opens on macOS and
 Windows; the full title lives in the frontmatter. Deletes move items to
 `.notehub/trash/` rather than destroying them.
+
+## Licence
+
+Copyright © 2026 TurbanTrap. All rights in NoteHub remain with the author.
+
+NoteHub is free software: you can redistribute it and modify it under the terms of the
+**GNU General Public License, version 3** or, at your option, any later version. It is
+distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY — without even
+the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+[LICENSE](LICENSE) file, or <https://www.gnu.org/licenses/>, for the full terms.
+
+In plain terms: use it for anything, including at work, for free and forever. Change it,
+and pass your changes on. The one condition is that if you distribute a modified
+version, you publish its source under this same licence — so NoteHub cannot be taken,
+closed up and sold back to the people it came from.
