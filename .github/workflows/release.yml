@@ -38,25 +38,29 @@ jobs:
     permissions:
       contents: write
 
+    # Actions are pinned to a commit, not a tag. A tag can be moved to point at new
+    # code, and this job holds a token that can write to the repository and publish
+    # releases — so "whatever v4 means today" is more trust than it needs to extend.
+    # The trailing comment is the tag each SHA stood for when it was pinned.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.rust-targets }}
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
 
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -70,12 +74,48 @@ jobs:
 
             **macOS** — right-click NoteHub.app and choose Open, then Open again.
             **Windows** — click "More info" on the SmartScreen notice, then "Run anyway".
+
+            Each file's SHA-256 is in `SHA256SUMS-*.txt` beside the downloads. Since
+            the builds are unsigned, that checksum is the only way to tell the file you
+            downloaded is the file this workflow built — see the README for how to
+            check one.
           releaseDraft: true
           prerelease: false
 
+      # Without this there is nothing a download can be checked against. The builds are
+      # unsigned, so a file that was tampered with on the way to someone looks exactly
+      # like one that was not; a checksum published by the build itself is what makes
+      # the difference visible.
+      - name: Publish checksums
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sums="SHA256SUMS-${{ matrix.name }}.txt"
+          : > "$sums"
+
+          # Only the files a person downloads by hand. Each matrix leg writes its own
+          # file, so the two platforms never race to overwrite one another's.
+          while IFS= read -r file; do
+            if command -v sha256sum >/dev/null 2>&1; then
+              hash=$(sha256sum "$file" | awk '{print $1}')
+            else
+              hash=$(shasum -a 256 "$file" | awk '{print $1}')
+            fi
+            printf '%s  %s\n' "$hash" "$(basename "$file")" >> "$sums"
+          done < <(
+            find src-tauri/target -type f \
+              \( -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) | sort
+          )
+
+          cat "$sums"
+          gh release upload "${{ github.ref_name }}" "$sums" --clobber
+
       - name: Keep the installers on a manual run
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: notehub-${{ matrix.name }}
           path: |
