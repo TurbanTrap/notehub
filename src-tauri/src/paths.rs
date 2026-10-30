@@ -207,11 +207,11 @@ mod tests {
 
     #[test]
     fn two_vaults_get_different_keys_and_one_vault_keeps_its_own() {
-        let a = vault_key(Path::new("/Users/jds/Notes"));
-        let b = vault_key(Path::new("/Users/jds/Other"));
+        let a = vault_key(Path::new("/Users/a/Notes"));
+        let b = vault_key(Path::new("/Users/a/Other"));
 
         assert_ne!(a, b);
-        assert_eq!(a, vault_key(Path::new("/Users/jds/Notes")));
+        assert_eq!(a, vault_key(Path::new("/Users/a/Notes")));
         assert_eq!(a.len(), 16);
     }
 }

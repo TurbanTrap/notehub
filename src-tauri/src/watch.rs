@@ -191,7 +191,7 @@ fn ignored(root: &Path, path: &Path) -> bool {
 mod tests {
     use super::*;
 
-    const ROOT: &str = "/Users/jds/Notes";
+    const ROOT: &str = "/Users/a/Notes";
 
     fn under(relative: &str) -> PathBuf {
         Path::new(ROOT).join(relative)
@@ -235,7 +235,7 @@ mod tests {
     fn a_vault_inside_a_dotted_folder_is_still_watched() {
         // The reason the check is made on the relative path: every path under this
         // root contains a dotted component.
-        let root = Path::new("/Users/jds/.config/notes");
+        let root = Path::new("/Users/a/.config/notes");
         assert!(!ignored(root, &root.join("notebooks/RE/upx.md")));
     }
 
